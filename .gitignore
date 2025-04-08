@@ -21,3 +21,9 @@ __pycache__/
 
 #CUAD
 cuad/
+
+# Stock pretrained weights (476MB) — not a project artifact, just the
+# public roberta-base checkpoint used as a frozen encoder. Re-downloads
+# automatically via transformers on first use; keeping it out of git
+# avoids GitHub's 100MB file-size limit and Git LFS entirely.
+train_model/saved_model_roberta/model.safetensors
