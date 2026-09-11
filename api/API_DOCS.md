@@ -86,7 +86,40 @@ Analyze a legal document for risky clauses.
 
 ---
 
-### 2. Get Recent Analyses
+### 2. Upload Document (PDF/DOCX)
+
+**POST** `/api/documents/upload/`
+
+Analyze an uploaded PDF or DOCX file — same response shape as `/analyze`, but the text is extracted from the file server-side instead of being sent as JSON.
+
+**Request:** `multipart/form-data` with a `file` field.
+
+```bash
+curl -X POST http://localhost:8000/api/documents/upload/ \
+  -F "file=@contract.pdf"
+```
+
+**Response (201 Created):** identical shape to `/analyze` (see above) — `filename` is taken from the uploaded file's name.
+
+**Error Responses (400):**
+```json
+{ "error": "No file provided — send it as multipart/form-data under the 'file' field" }
+```
+```json
+{ "error": "Unsupported file type 'text/plain' for 'notes.txt'. Only .pdf and .docx are supported." }
+```
+```json
+{ "error": "File too large (15.2MB) — max 10MB" }
+```
+```json
+{ "error": "Could not read PDF: ..." }
+```
+
+**Limits:** 10MB max file size (`MAX_UPLOAD_SIZE_BYTES` env var to override). Processing is synchronous — a very large document ties up the request for its full processing time; there's no async/queued path yet (tracked separately).
+
+---
+
+### 3. Get Recent Analyses
 
 **GET** `/api/documents/recent/?limit=10`
 
@@ -109,7 +142,7 @@ Retrieve recent document analyses.
 
 ---
 
-### 3. Health Check
+### 4. Health Check
 
 **GET** `/api/health/`
 
@@ -126,7 +159,7 @@ Check API and model health.
 
 ---
 
-### 4. Performance Metrics
+### 5. Performance Metrics
 
 **GET** `/api/metrics/`
 

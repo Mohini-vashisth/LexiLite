@@ -13,16 +13,44 @@ api/measure_confidence_impact.py and manual verification against a real
 model are for).
 """
 
+import io
 from unittest.mock import patch, MagicMock
 
+import docx
 import numpy as np
-from django.test import TestCase
+import pymupdf
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from .document_parsers import (
+    extract_text_from_pdf_bytes,
+    extract_text_from_docx_bytes,
+    extract_text_from_upload,
+    UnsupportedFileType,
+    DocumentParseError,
+)
 from .inference import LegalAnalyzer
 from .models import AnalysisResult
+
+
+def make_pdf_bytes(text: str) -> bytes:
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def make_docx_bytes(text: str) -> bytes:
+    document = docx.Document()
+    document.add_paragraph(text)
+    buf = io.BytesIO()
+    document.save(buf)
+    return buf.getvalue()
 
 
 def fake_analysis(risky_count=1, total_clauses=3):
@@ -66,16 +94,19 @@ class AnalyzeEndpointTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_malformed_json_body(self):
-        # Current behavior: the view's own try/except catches DRF's
-        # ParseError (raised lazily when request.data is first accessed)
-        # and reports it as a 500, not a 400 — arguably a client error
-        # should be a 400, not a server error. Documented here rather than
-        # silently treated as correct; worth a follow-up if it matters for
-        # API consumers distinguishing "your fault" from "our fault".
+        # request.data is accessed in `analyze` itself (to pull out text/
+        # filename) BEFORE _run_analysis's try/except starts, so a parse
+        # failure here propagates to DRF's own exception handler rather
+        # than being swallowed into a 500 — DRF correctly reports a
+        # ParseError as 400, which is the right status for a client's
+        # malformed input. (An earlier version of this code wrapped the
+        # request.data access inside the same try/except as everything
+        # else, which incorrectly reported this exact case as a 500 — the
+        # LEX-3 refactor fixed this as a side effect, not the goal.)
         response = self.client.post(
             self.url, data='{not valid json', content_type='application/json'
         )
-        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     @patch('analyzer.views.get_analyzer')
     def test_rejects_when_no_clauses_extracted(self, mock_get_analyzer):
@@ -322,3 +353,111 @@ class ProbabilityMappingRegressionTests(TestCase):
         self.assertEqual(clause['risk'], 'risky')
         self.assertAlmostEqual(clause['risky_prob'], 0.97)
         self.assertAlmostEqual(clause['safe_prob'], 0.03)
+
+
+class DocumentParserTests(TestCase):
+    """Exercises the real PyMuPDF/python-docx extraction against real
+    (minimal, generated) files — neither library touches torch, so unlike
+    the ML pipeline these can run for real in any environment, not mocked."""
+
+    def test_extracts_text_from_real_pdf(self):
+        pdf_bytes = make_pdf_bytes("This clause limits liability.")
+        text = extract_text_from_pdf_bytes(pdf_bytes)
+        self.assertIn("This clause limits liability.", text)
+
+    def test_extracts_text_from_real_docx(self):
+        docx_bytes = make_docx_bytes("This clause limits liability.")
+        text = extract_text_from_docx_bytes(docx_bytes)
+        self.assertIn("This clause limits liability.", text)
+
+    def test_corrupt_pdf_raises_parse_error(self):
+        with self.assertRaises(DocumentParseError):
+            extract_text_from_pdf_bytes(b"this is not a real pdf")
+
+    def test_corrupt_docx_raises_parse_error(self):
+        with self.assertRaises(DocumentParseError):
+            extract_text_from_docx_bytes(b"this is not a real docx")
+
+    def test_dispatches_by_extension_not_just_content_type(self):
+        # A client that mislabels the content-type but names the file
+        # correctly should still work — extension is checked first.
+        upload = SimpleUploadedFile(
+            "contract.pdf", make_pdf_bytes("Clause text here."), content_type="application/octet-stream"
+        )
+        text = extract_text_from_upload(upload)
+        self.assertIn("Clause text here.", text)
+
+    def test_unsupported_extension_raises(self):
+        upload = SimpleUploadedFile("notes.txt", b"plain text", content_type="text/plain")
+        with self.assertRaises(UnsupportedFileType):
+            extract_text_from_upload(upload)
+
+
+class UploadEndpointTests(APITestCase):
+    def setUp(self):
+        self.url = reverse('document-upload')
+
+    def test_rejects_missing_file(self):
+        response = self.client.post(self.url, {}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('No file provided', response.data['error'])
+
+    def test_rejects_unsupported_file_type(self):
+        upload = SimpleUploadedFile("notes.txt", b"plain text content", content_type="text/plain")
+        response = self.client.post(self.url, {'file': upload}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Unsupported file type', response.data['error'])
+
+    def test_rejects_corrupt_pdf(self):
+        upload = SimpleUploadedFile("contract.pdf", b"not a real pdf", content_type="application/pdf")
+        response = self.client.post(self.url, {'file': upload}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Could not read PDF', response.data['error'])
+
+    @override_settings(MAX_UPLOAD_SIZE_BYTES=100)
+    def test_rejects_file_over_size_limit(self):
+        upload = SimpleUploadedFile(
+            "contract.pdf", make_pdf_bytes("x" * 500), content_type="application/pdf"
+        )
+        response = self.client.post(self.url, {'file': upload}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('too large', response.data['error'])
+
+    @patch('analyzer.views.get_analyzer')
+    def test_successful_pdf_upload_returns_same_shape_as_analyze(self, mock_get_analyzer):
+        mock_analyzer = MagicMock()
+        mock_analyzer.extract_clauses.return_value = ['Clause one.', 'Clause two.']
+        mock_analyzer.analyze_clauses.return_value = fake_analysis(risky_count=1, total_clauses=2)
+        mock_get_analyzer.return_value = mock_analyzer
+
+        upload = SimpleUploadedFile(
+            "contract.pdf",
+            make_pdf_bytes("Clause one. Clause two."),
+            content_type="application/pdf",
+        )
+        response = self.client.post(self.url, {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['filename'], 'contract.pdf')
+        self.assertEqual(response.data['total_clauses'], 2)
+        self.assertEqual(response.data['risky_count'], 1)
+        self.assertEqual(AnalysisResult.objects.count(), 1)
+        self.assertEqual(AnalysisResult.objects.first().filename, 'contract.pdf')
+
+    @patch('analyzer.views.get_analyzer')
+    def test_successful_docx_upload(self, mock_get_analyzer):
+        mock_analyzer = MagicMock()
+        mock_analyzer.extract_clauses.return_value = ['Clause one.', 'Clause two.']
+        mock_analyzer.analyze_clauses.return_value = fake_analysis(risky_count=0, total_clauses=2)
+        mock_get_analyzer.return_value = mock_analyzer
+
+        upload = SimpleUploadedFile(
+            "contract.docx",
+            make_docx_bytes("Clause one. Clause two."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response = self.client.post(self.url, {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['filename'], 'contract.docx')
+        self.assertEqual(response.data['risky_count'], 0)
