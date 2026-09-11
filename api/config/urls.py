@@ -1,0 +1,12 @@
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from analyzer.views import DocumentAnalysisViewSet, HealthCheckView, MetricsView
+
+router = DefaultRouter()
+router.register(r'documents', DocumentAnalysisViewSet, basename='document')
+
+urlpatterns = [
+    path('api/', include(router.urls)),
+    path('api/health/', HealthCheckView.as_view(), name='health'),
+    path('api/metrics/', MetricsView.as_view(), name='metrics'),
+]

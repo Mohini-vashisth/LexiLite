@@ -1,0 +1,39 @@
+# Version control history — Docker needs the current file contents only,
+# never the .git history, and it can be large.
+.git/
+.gitignore
+
+# Secrets. These must be passed into the container at runtime as real
+# environment variables (docker run -e ...), never baked into an image —
+# anyone who can pull the image could otherwise extract them.
+.env
+
+# Local dev database — this is runtime STATE, not application code. Baking
+# it in would ship whatever happens to be in the developer's local SQLite
+# file (including test rows) into every image built from this Dockerfile.
+api/db.sqlite3
+
+# Compiled Python bytecode caches — regenerated fresh every run, and if
+# copied in from a different Python version/platform than the container's,
+# can even cause confusing errors rather than saving any real time.
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Reference/training-only material the running API never touches. The
+# Dockerfile copies only train_model/saved_model explicitly (the trained
+# classifier + encoder) — everything below is excluded so a future broader
+# COPY can't accidentally pull it in:
+#   - cuad/: raw CUAD dataset dump used to build the training data, not by
+#     the API itself.
+#   - train_model/data/: the processed labeled CSV — training input, unused
+#     at inference time.
+#   - train_model/saved_model_roberta/: the RoBERTa model (~477MB) — not
+#     wired into the API yet (tracked as LEX-8), no reason to ship it until
+#     it is.
+cuad/
+train_model/data/
+train_model/saved_model_roberta/
+
+# Editor/OS noise.
+.DS_Store
