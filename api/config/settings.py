@@ -11,6 +11,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # copies only the saved_model artifacts to a different path).
 TRAIN_MODEL_DIR = os.getenv('TRAIN_MODEL_DIR', str(BASE_DIR.parent / 'train_model'))
 
+# Cap on uploaded document size (PDF/DOCX). 10MB comfortably covers real
+# contracts (a 100-page PDF is typically 1-5MB) while keeping a single
+# upload from tying up a synchronous request/worker for too long — there's
+# no async/queued processing path yet (see LEX-8/ops backlog).
+MAX_UPLOAD_SIZE_BYTES = int(os.getenv('MAX_UPLOAD_SIZE_BYTES', 10 * 1024 * 1024))
+
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'dev-key-change-in-production')
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')

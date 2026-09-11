@@ -1,11 +1,12 @@
 import logging
 import uuid
 import time
+from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.core.cache import cache
+from .document_parsers import extract_text_from_upload, UnsupportedFileType, DocumentParseError
 from .models import AnalysisResult
 from .serializers import AnalysisResultSerializer
 from .inference import LegalAnalyzer
@@ -25,6 +26,70 @@ def get_analyzer():
     return _analyzer
 
 
+def _run_analysis(text, filename):
+    """
+    Shared by both the JSON-text endpoint (analyze) and the file-upload
+    endpoint (upload) — everything after "we have plain text" is identical
+    regardless of where that text came from, so it lives in one place
+    rather than being copy-pasted between the two views.
+
+    Returns a DRF Response ready to hand back to the caller.
+    """
+    start_time = time.time()
+
+    try:
+        if not text or len(text) < 10:
+            return Response(
+                {'error': 'Document text required (min 10 characters)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        document_id = str(uuid.uuid4())
+        logger.info(f"Analyzing document {document_id} ({len(text)} chars)")
+
+        clauses = get_analyzer().extract_clauses(text)
+
+        if not clauses:
+            return Response(
+                {'error': 'No clauses extracted from document'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        analysis = get_analyzer().analyze_clauses(clauses)
+
+        AnalysisResult.objects.create(
+            document_id=document_id,
+            filename=filename,
+            clauses=clauses,
+            analysis=analysis,
+            processing_time_ms=analysis['processing_time_ms'],
+            model_used='sbert',
+        )
+
+        total_time_ms = (time.time() - start_time) * 1000
+        logger.info(
+            f"✓ Analysis complete: {len(clauses)} clauses, "
+            f"{analysis['risky_count']} risky, {total_time_ms:.1f}ms"
+        )
+
+        return Response({
+            'document_id': document_id,
+            'filename': filename,
+            'total_clauses': analysis['total_clauses'],
+            'risky_count': analysis['risky_count'],
+            'risky_clauses': analysis['risky_clauses'][:10],  # Top 10
+            'processing_time_ms': round(analysis['processing_time_ms'], 2),
+            'api_response_time_ms': round(total_time_ms, 2),
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"Analysis error: {e}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 class DocumentAnalysisViewSet(viewsets.ModelViewSet):
     """API endpoint for document analysis"""
     queryset = AnalysisResult.objects.all()
@@ -36,65 +101,40 @@ class DocumentAnalysisViewSet(viewsets.ModelViewSet):
         Analyze a legal document for risky clauses.
         POST body: {"text": "document text", "filename": "optional.pdf"}
         """
-        start_time = time.time()
+        text = request.data.get('text', '')
+        filename = request.data.get('filename', 'unnamed_document')
+        return _run_analysis(text, filename)
+
+    @action(detail=False, methods=['post'])
+    def upload(self, request):
+        """
+        Analyze an uploaded PDF or DOCX file for risky clauses.
+        POST multipart/form-data with a `file` field.
+        Returns the same response shape as /analyze.
+        """
+        uploaded_file = request.FILES.get('file')
+        if uploaded_file is None:
+            return Response(
+                {'error': "No file provided — send it as multipart/form-data under the 'file' field"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if uploaded_file.size > settings.MAX_UPLOAD_SIZE_BYTES:
+            max_mb = settings.MAX_UPLOAD_SIZE_BYTES / (1024 * 1024)
+            return Response(
+                {'error': f'File too large ({uploaded_file.size / (1024 * 1024):.1f}MB) — max {max_mb:.0f}MB'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
-            text = request.data.get('text', '')
-            filename = request.data.get('filename', 'unnamed_document')
+            text = extract_text_from_upload(uploaded_file)
+        except UnsupportedFileType as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except DocumentParseError as e:
+            logger.warning(f"Failed to parse uploaded file '{uploaded_file.name}': {e}")
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-            if not text or len(text) < 10:
-                return Response(
-                    {'error': 'Document text required (min 10 characters)'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            document_id = str(uuid.uuid4())
-            logger.info(f"Analyzing document {document_id} ({len(text)} chars)")
-
-            # Extract clauses
-            clauses = get_analyzer().extract_clauses(text)
-
-            if not clauses:
-                return Response(
-                    {'error': 'No clauses extracted from document'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Analyze
-            analysis = get_analyzer().analyze_clauses(clauses)
-
-            # Store result
-            result = AnalysisResult.objects.create(
-                document_id=document_id,
-                filename=filename,
-                clauses=clauses,
-                analysis=analysis,
-                processing_time_ms=analysis['processing_time_ms'],
-                model_used='sbert',
-            )
-
-            total_time_ms = (time.time() - start_time) * 1000
-            logger.info(
-                f"✓ Analysis complete: {len(clauses)} clauses, "
-                f"{analysis['risky_count']} risky, {total_time_ms:.1f}ms"
-            )
-
-            return Response({
-                'document_id': document_id,
-                'filename': filename,
-                'total_clauses': analysis['total_clauses'],
-                'risky_count': analysis['risky_count'],
-                'risky_clauses': analysis['risky_clauses'][:10],  # Top 10
-                'processing_time_ms': round(analysis['processing_time_ms'], 2),
-                'api_response_time_ms': round(total_time_ms, 2),
-            }, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            logger.error(f"Analysis error: {e}")
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return _run_analysis(text, uploaded_file.name)
 
     @action(detail=False, methods=['get'])
     def recent(self, request):
