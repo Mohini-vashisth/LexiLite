@@ -26,7 +26,8 @@ LegalDocumentAnalyzer/
 │   ├── compare_models.py            # Script to compare CUAD models
 ├── data/
 │   ├── legal_clauses_labeled.csv    # Processed CUAD dataset
-├── saved_model/                     # Folder containing trained models
+├── saved_model/                     # Folder containing trained BERT models
+├── saved_model_roberta/             # Folder containing trained RoBERTA models
 ├── .env                             # Environment file for storing sensitive keys
 ├── README.md                        # Project documentation
 ├── requirements.txt                 # Python dependencies
@@ -116,4 +117,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## 💬 Contact
 
-Maintained by **Mohini**. Feel free to reach out if you have questions or suggestions!
+Maintained by **Lakshya**. Feel free to reach out if you have questions or suggestions!

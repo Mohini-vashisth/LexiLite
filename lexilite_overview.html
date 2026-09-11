@@ -1,0 +1,432 @@
+<title>LexiLite System Overview</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #eef1ee;
+    --surface: #ffffff;
+    --surface-sunken: #e4e8e3;
+    --ink: #171a17;
+    --ink-soft: #4b504a;
+    --ink-faint: #7c8179;
+    --line: #cdd2c8;
+    --line-strong: #a9afa2;
+    --risky: #b3402c;
+    --safe: #2f6f5c;
+    --pending: #93691c;
+    --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --font-body: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", "SF Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #13160f;
+      --surface: #1b1f17;
+      --surface-sunken: #10130d;
+      --ink: #eceee7;
+      --ink-soft: #b7bcb0;
+      --ink-faint: #82877c;
+      --line: #333a2c;
+      --line-strong: #4a5240;
+      --risky: #d98268;
+      --safe: #7fb69f;
+      --pending: #c9a24e;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #13160f;
+    --surface: #1b1f17;
+    --surface-sunken: #10130d;
+    --ink: #eceee7;
+    --ink-soft: #b7bcb0;
+    --ink-faint: #82877c;
+    --line: #333a2c;
+    --line-strong: #4a5240;
+    --risky: #d98268;
+    --safe: #7fb69f;
+    --pending: #c9a24e;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.6;
+  }
+
+  .page {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 3.5rem 1.5rem 5rem;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 0.9rem;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.6rem;
+    text-wrap: balance;
+  }
+
+  .thesis {
+    font-family: var(--font-display);
+    font-size: 19px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 2.8rem;
+    text-wrap: pretty;
+  }
+
+  h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 22px;
+    margin: 0 0 0.3rem;
+    text-wrap: balance;
+  }
+
+  .section-sub {
+    font-size: 14px;
+    color: var(--ink-faint);
+    margin: 0 0 1.4rem;
+    max-width: 62ch;
+  }
+
+  section {
+    margin: 0 0 3.2rem;
+  }
+
+  section + section {
+    padding-top: 3.2rem;
+    border-top: 1px solid var(--line);
+  }
+
+  p { max-width: 68ch; }
+
+  figure {
+    margin: 1.6rem 0 0;
+    padding: 0;
+  }
+
+  .diagram-frame {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1.2rem 1rem 0.6rem;
+    overflow-x: auto;
+  }
+
+  svg { max-width: 100%; height: auto; display: block; }
+  svg text { fill: currentColor; font-family: var(--font-mono); }
+  svg .label { font-size: 12px; fill: var(--ink); }
+  svg .sub { font-size: 10.5px; fill: var(--ink-faint); }
+  svg .arrow-label { font-size: 10.5px; fill: var(--ink-soft); }
+  svg .box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+  svg .box-muted { fill: var(--surface-sunken); stroke: var(--pending); stroke-width: 1.2; stroke-dasharray: 3 3; }
+  svg .flow { stroke: var(--ink-soft); stroke-width: 1.4; fill: none; }
+  svg .flow-pending { stroke: var(--pending); stroke-width: 1.4; fill: none; stroke-dasharray: 4 3; }
+  svg .gate { fill: var(--surface); stroke: var(--risky); stroke-width: 1.6; }
+
+  figcaption {
+    font-size: 13px;
+    color: var(--ink-faint);
+    margin: 0.9rem 0 0;
+    max-width: 62ch;
+  }
+
+  .legend {
+    display: flex;
+    gap: 1.5rem;
+    margin: 0.8rem 0 1.4rem;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    flex-wrap: wrap;
+  }
+
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .swatch { width: 18px; height: 0; border-top: 1.6px solid var(--ink-soft); }
+  .legend .swatch.pending { border-top: 1.6px dashed var(--pending); }
+
+  .imbalance {
+    margin: 1.4rem 0 0.6rem;
+  }
+
+  .imbalance-bar {
+    display: flex;
+    height: 34px;
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+  }
+
+  .imbalance-bar .safe-seg {
+    background: color-mix(in srgb, var(--safe) 22%, var(--surface));
+    border-right: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    padding-left: 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--safe);
+    width: 85%;
+  }
+
+  .imbalance-bar .risky-seg {
+    background: color-mix(in srgb, var(--risky) 22%, var(--surface));
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--risky);
+    width: 15%;
+  }
+
+  .imbalance-caption {
+    font-size: 13px;
+    color: var(--ink-faint);
+    margin: 0.6rem 0 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+
+  th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 0 10px 8px 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  td {
+    padding: 10px 10px 10px 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+
+  td.mono, code {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+
+  code {
+    background: var(--surface-sunken);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  .status-note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--pending);
+    border-radius: 3px;
+    padding: 0.9rem 1.1rem;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    margin-top: 1.6rem;
+  }
+
+  .status-note strong { color: var(--ink); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    section { animation: none; }
+  }
+</style>
+
+<div class="page">
+
+  <p class="eyebrow">System overview — LexiLite</p>
+  <h1>How a contract turns into a risk report</h1>
+  <p class="thesis">A legal clause goes in as plain text; a label — safe, risky, or "ask a human" — comes out. The whole project is the machinery in between: a classifier trained on 13,823 labeled clauses, a confidence gate that refuses to guess when it isn't sure, and a Django API that serves the result in one request.</p>
+
+  <section>
+    <h2>The request lifecycle</h2>
+    <p class="section-sub">One document analysis, start to finish — the path every clause actually takes through the system.</p>
+
+    <div class="legend">
+      <span><span class="swatch"></span> confident path</span>
+      <span><span class="swatch pending"></span> escalation path (low confidence)</span>
+    </div>
+
+    <figure>
+      <div class="diagram-frame">
+        <svg viewBox="0 0 1200 500" role="img" aria-label="A client sends document text to the Django API, which splits it into clauses, encodes each with Sentence-BERT, classifies with logistic regression, and routes through a confidence gate: confident predictions return directly as accepted safe or risky labels, while low-confidence predictions are dashed off to a fallback router and flagged for human review instead of being returned as a guess.">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-soft)"></path>
+            </marker>
+            <marker id="arrow-pending" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--pending)"></path>
+            </marker>
+          </defs>
+
+          <!-- Client -->
+          <rect class="box" x="20" y="180" width="120" height="64" rx="3"></rect>
+          <text class="label" x="80" y="207" text-anchor="middle">Client</text>
+          <text class="sub" x="80" y="222" text-anchor="middle">app / cURL</text>
+
+          <!-- API -->
+          <rect class="box" x="200" y="180" width="150" height="64" rx="3"></rect>
+          <text class="label" x="275" y="205" text-anchor="middle">Django REST API</text>
+          <text class="sub" x="275" y="220" text-anchor="middle">Gunicorn · 4 workers</text>
+          <text class="sub" x="275" y="233" text-anchor="middle">/api/documents/analyze/</text>
+
+          <!-- Encoder -->
+          <rect class="box" x="400" y="180" width="150" height="64" rx="3"></rect>
+          <text class="label" x="475" y="205" text-anchor="middle">Sentence-BERT</text>
+          <text class="sub" x="475" y="220" text-anchor="middle">all-MiniLM-L6-v2</text>
+          <text class="sub" x="475" y="233" text-anchor="middle">384-dim · batch 32</text>
+
+          <!-- Classifier -->
+          <rect class="box" x="600" y="180" width="150" height="64" rx="3"></rect>
+          <text class="label" x="675" y="205" text-anchor="middle">Logistic Regression</text>
+          <text class="sub" x="675" y="220" text-anchor="middle">clause_classifier.pkl</text>
+          <text class="sub" x="675" y="233" text-anchor="middle">P(safe), P(risky)</text>
+
+          <!-- Gate diamond -->
+          <polygon class="gate" points="760,212 830,157 900,212 830,267"></polygon>
+          <text class="label" x="830" y="205" text-anchor="middle" style="fill: var(--risky)">Confidence</text>
+          <text class="label" x="830" y="219" text-anchor="middle" style="fill: var(--risky)">gate</text>
+
+          <!-- Response -->
+          <rect class="box" x="1020" y="100" width="150" height="64" rx="3"></rect>
+          <text class="label" x="1095" y="125" text-anchor="middle">Response JSON</text>
+          <text class="sub" x="1095" y="140" text-anchor="middle">label + confidence</text>
+          <text class="sub" x="1095" y="153" text-anchor="middle">+ processing_time_ms</text>
+
+          <!-- Fallback -->
+          <rect class="box-muted" x="1000" y="300" width="150" height="60" rx="3"></rect>
+          <text class="label" x="1075" y="325" text-anchor="middle" style="fill: var(--pending)">Fallback router</text>
+          <text class="sub" x="1075" y="340" text-anchor="middle">below 0.65 conf. or</text>
+          <text class="sub" x="1075" y="352" text-anchor="middle">0.15 margin</text>
+
+          <!-- Human review -->
+          <rect class="box-muted" x="1000" y="400" width="150" height="52" rx="3"></rect>
+          <text class="label" x="1075" y="422" text-anchor="middle" style="fill: var(--pending)">needs_review</text>
+          <text class="sub" x="1075" y="437" text-anchor="middle">returned, unlabeled</text>
+
+          <!-- Flow arrows -->
+          <line class="flow" x1="140" y1="212" x2="196" y2="212" marker-end="url(#arrow)"></line>
+          <text class="arrow-label" x="168" y="200" text-anchor="middle">POST text</text>
+
+          <line class="flow" x1="350" y1="212" x2="396" y2="212" marker-end="url(#arrow)"></line>
+          <text class="arrow-label" x="375" y="200" text-anchor="middle">clauses[]</text>
+
+          <line class="flow" x1="550" y1="212" x2="596" y2="212" marker-end="url(#arrow)"></line>
+          <text class="arrow-label" x="575" y="200" text-anchor="middle">embeddings</text>
+
+          <line class="flow" x1="750" y1="212" x2="757" y2="212" marker-end="url(#arrow)"></line>
+
+          <path class="flow" d="M 830 157 L 830 132 L 1017 132" marker-end="url(#arrow)"></path>
+          <text class="arrow-label" x="915" y="122" text-anchor="middle">accepted</text>
+
+          <path class="flow-pending" d="M 830 267 L 830 330 L 997 330" marker-end="url(#arrow-pending)"></path>
+          <text class="arrow-label" x="915" y="320" text-anchor="middle" style="fill: var(--pending)">uncertain</text>
+
+          <line class="flow-pending" x1="1075" y1="360" x2="1075" y2="397" marker-end="url(#arrow-pending)"></line>
+          <text class="arrow-label" x="1128" y="382" text-anchor="middle" style="fill: var(--pending)">escalate</text>
+
+          <!-- Return path -->
+          <path class="flow" d="M 1095 164 L 1095 470 L 80 470 L 80 247" marker-end="url(#arrow)"></path>
+          <text class="arrow-label" x="590" y="484" text-anchor="middle">risky_clauses[] · confidence · latency</text>
+        </svg>
+      </div>
+      <figcaption>Every clause is encoded and classified the same way — the branch only happens at the gate. A confident prediction returns immediately as an accepted label; a prediction the model isn't sure about is diverted to <code>needs_review</code> rather than returned as a possibly-wrong high-confidence answer.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Why the gate exists</h2>
+    <p class="section-sub">The training data itself explains the design choice — it's heavily skewed toward "safe."</p>
+
+    <div class="imbalance">
+      <div class="imbalance-bar">
+        <div class="safe-seg">safe · 11,756</div>
+        <div class="risky-seg">2,067</div>
+      </div>
+      <p class="imbalance-caption">85.1% safe / 14.9% risky across 13,823 labeled clauses (CUAD dataset). A classifier trained on this split can reach high raw accuracy just by leaning toward "safe" — which is exactly the failure mode the confidence gate is built to catch: a clause that's actually risky but gets a confident, wrong "safe."</p>
+    </div>
+
+    <p style="font-size: 14px; color: var(--ink-soft); margin-top: 1.2rem; max-width: 62ch;">The gate in <code>analyzer/confidence.py</code> checks two things, not one — <code>min_confidence</code> (the winning probability must clear 0.65) and <code>min_margin</code> (it must beat the runner-up by at least 0.15). The margin check exists because a 0.51-vs-0.49 call would still pass a bare confidence threshold, and a coin-flip prediction dressed up as "51% confident" is worse than admitting uncertainty.</p>
+  </section>
+
+  <section>
+    <h2>Component reference</h2>
+    <p class="section-sub">Where each piece of the diagram above actually lives in the repo.</p>
+
+    <table>
+      <tr>
+        <th>Component</th>
+        <th>Tech</th>
+        <th>Role</th>
+      </tr>
+      <tr>
+        <td>Dataset</td>
+        <td class="mono">legal_clauses_labeled.csv</td>
+        <td>13,823 CUAD clauses, safe/risky labeled</td>
+      </tr>
+      <tr>
+        <td>Encoder</td>
+        <td class="mono">sentence-transformers</td>
+        <td>Text → 384-dim embedding, batched for throughput</td>
+      </tr>
+      <tr>
+        <td>Classifier</td>
+        <td class="mono">scikit-learn LogReg</td>
+        <td>Embedding → P(safe), P(risky)</td>
+      </tr>
+      <tr>
+        <td>Confidence gate</td>
+        <td class="mono">analyzer/confidence.py</td>
+        <td>Rejects low-confidence / low-margin calls</td>
+      </tr>
+      <tr>
+        <td>Fallback router</td>
+        <td class="mono">FallbackRouter</td>
+        <td>Escalates to a secondary model or <code>needs_review</code></td>
+      </tr>
+      <tr>
+        <td>API</td>
+        <td class="mono">Django + DRF + Gunicorn</td>
+        <td>Serves <code>/analyze</code>, <code>/health</code>, <code>/metrics</code></td>
+      </tr>
+      <tr>
+        <td>Explanation (optional path)</td>
+        <td class="mono">Groq + Mixtral</td>
+        <td>Plain-language explanation for flagged clauses</td>
+      </tr>
+    </table>
+
+    <div class="status-note">
+      <strong>Verification status:</strong> the pipeline and gating logic are implemented and code-reviewed; the throughput/latency figures and the confidence-gate error-rate reduction are design targets with measurement scripts in place (<code>benchmark.py</code>, <code>measure_confidence_impact.py</code>) but have not been executed successfully in this environment — an ML-library import deadlock in the sandbox blocked the run. Treat performance numbers as unverified until one of those scripts actually completes.
+    </div>
+  </section>
+
+</div>
