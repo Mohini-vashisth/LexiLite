@@ -6,6 +6,7 @@ Django REST API for legal document analysis with:
 - ✅ **Real-time clause analysis** with risk classification (Sentence-BERT + logistic regression)
 - ✅ **Confidence gating** — low-confidence calls routed to review, not guessed
 - ✅ **PDF/DOCX upload** alongside raw-text analysis
+- ✅ **Authentication** — every endpoint except `/health/` and `/metrics/` requires a real user (LEX-6); each user only ever sees their own analysis history
 - ✅ **Health checks** and metrics monitoring
 - ⚠️ Latency/concurrency: see [Performance Characteristics](#performance-characteristics) for real measured numbers and their caveats — the "sub-200ms, 4 workers" figures once claimed here were never actually measured
 
@@ -17,6 +18,7 @@ Django REST API for legal document analysis with:
 cd api
 pip install -r requirements.txt
 python manage.py migrate
+python manage.py createsuperuser   # or any User — this is what you'll authenticate as
 ```
 
 ### 2. Development Server
@@ -24,6 +26,14 @@ python manage.py migrate
 ```bash
 python manage.py runserver
 ```
+
+Then either open **http://localhost:8000/** and log in via the "Log in" link (session auth, for the browser page), or grab your API token for programmatic access:
+
+```bash
+python manage.py shell -c "from rest_framework.authtoken.models import Token; print(Token.objects.get(user__username='<you>').key)"
+```
+
+(A token is created automatically for every user the moment the account exists — see `analyzer/signals.py` — no separate "generate token" step.)
 
 ### 3. Production Server (Gunicorn)
 
@@ -34,12 +44,26 @@ gunicorn --workers=4 --bind=0.0.0.0:8000 config.wsgi:application
 ### 4. Benchmark
 
 ```bash
+export LEXILITE_API_TOKEN=<your token from step 2>
 python benchmark.py --concurrent 50 --total 200
 ```
 
 ---
 
+## Authentication
+
+Two ways in, chosen automatically by however the client identifies itself:
+
+- **Session auth** — for the browser page at `/`. Log in at `/api-auth/login/?next=/`, log out at `/api-auth/logout/`. POST requests from the page must include an `X-CSRFToken` header read from the `csrftoken` cookie (standard Django AJAX pattern) — the page already does this.
+- **Token auth** — for scripts/API clients. Send `Authorization: Token <key>` on every request. No login flow, no cookies, no CSRF concerns.
+
+`/api/health/` and `/api/metrics/` are the only endpoints that stay open to anyone — they're operational probes (a load balancer has no user to authenticate as), and they reveal nothing beyond aggregate up/down and latency numbers.
+
+Every `AnalysisResult` is tied to whoever created it (`owner`, required). `/api/documents/recent/` and the standard list/retrieve actions only ever return the authenticated caller's own records — there's no way to see another user's analysis history through this API, regardless of which auth method you used.
+
 ## API Endpoints
+
+All endpoints below require authentication (see [Authentication](#authentication)) except `/api/health/` and `/api/metrics/`. An unauthenticated request to any of the others gets `403 {"detail": "Authentication credentials were not provided."}`.
 
 ### 1. Analyze Document
 

@@ -6,6 +6,7 @@ Production-ready Django REST API for real-time legal document analysis.
 
 ✅ **Real-time analysis** - Clause risk classification via Sentence-BERT + logistic regression
 ✅ **Batch processing** - Efficient model encoding
+✅ **Authenticated** - session login for the browser page, API tokens for scripts — every user only sees their own analysis history (see [API_DOCS.md](API_DOCS.md#authentication))
 ✅ **Confidence gating** - Low-confidence calls routed to review instead of guessed (see [Confidence gating](#confidence-gating) below)
 ✅ **Performance monitoring** - Built-in metrics & health checks
 ✅ **PDF/DOCX upload** - Not just raw text

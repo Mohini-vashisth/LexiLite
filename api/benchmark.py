@@ -4,6 +4,7 @@ Performance benchmark for LexiLite REST API
 Tests concurrent request handling and latency
 """
 
+import os
 import requests
 import time
 import statistics
@@ -11,6 +12,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
 
 API_URL = "http://localhost:8000/api/documents/analyze/"
+
+# LEX-6: /analyze now requires authentication. Every user gets a token
+# auto-created (see analyzer/signals.py) — grab yours from the Django
+# shell: `from rest_framework.authtoken.models import Token;
+# Token.objects.get(user__username='<you>').key`, then either export
+# LEXILITE_API_TOKEN or pass --token.
+API_TOKEN = os.getenv("LEXILITE_API_TOKEN")
 
 # Sample legal text for testing
 SAMPLE_TEXT = """
@@ -49,10 +57,12 @@ the jurisdiction specified herein, without regard to its conflict of law princip
 def benchmark_single_request():
     """Test a single request"""
     try:
+        headers = {"Authorization": f"Token {API_TOKEN}"} if API_TOKEN else {}
         start = time.time()
         response = requests.post(
             API_URL,
             json={"text": SAMPLE_TEXT, "filename": "test.pdf"},
+            headers=headers,
             timeout=30
         )
         elapsed_ms = (time.time() - start) * 1000
@@ -77,6 +87,14 @@ def benchmark_single_request():
 
 def run_benchmark(num_concurrent=10, num_requests=100):
     """Run concurrent benchmark"""
+    if not API_TOKEN:
+        print("❌ LEXILITE_API_TOKEN is not set — every request would fail with 403 "
+              "since /analyze now requires authentication (LEX-6).")
+        print("   Get your token: python manage.py shell -c \"from rest_framework.authtoken.models "
+              "import Token; print(Token.objects.get(user__username='<you>').key)\"")
+        print("   Then: export LEXILITE_API_TOKEN=<that key>")
+        sys.exit(1)
+
     print(f"🧪 LexiLite REST API Benchmark")
     print(f"================================")
     print(f"📊 Configuration:")

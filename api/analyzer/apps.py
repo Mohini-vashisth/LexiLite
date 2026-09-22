@@ -7,10 +7,13 @@ class AnalyzerConfig(AppConfig):
     name = 'analyzer'
 
     def ready(self):
-        """Preload models only for the actual server process, not for
-        management commands (migrate, makemigrations, shell, etc.) — those
-        don't need torch/sentence-transformers loaded and it was hanging
-        `migrate` on this machine (fork/mutex issue with the ML libs)."""
+        """Registers signals (always) and preloads models only for the
+        actual server process, not for management commands (migrate,
+        makemigrations, shell, etc.) — those don't need torch/
+        sentence-transformers loaded and it was hanging `migrate` on this
+        machine (fork/mutex issue with the ML libs)."""
+        from . import signals  # noqa: F401 — registers auto-create-token; must run on every startup, not just runserver
+
         import sys
         if os.environ.get('LEXILITE_SKIP_MODEL_PRELOAD') == '1':
             return  # diagnostic escape hatch — verify routing/DB without paying the model-load cost

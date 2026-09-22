@@ -27,8 +27,11 @@
   }
   .page { max-width: 820px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
   header { margin-bottom: 2.5rem; }
-  h1 { font-size: 26px; font-weight: 600; margin: 0 0 0.4rem; }
-  .subtitle { color: var(--ink-soft); font-size: 15px; margin: 0; }
+  .header-top { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0; }
+  .subtitle { color: var(--ink-soft); font-size: 15px; margin: 0.4rem 0 0; }
+  .auth-status { font-size: 13.5px; color: var(--ink-soft); }
+  .auth-status a { color: var(--accent); }
 
   .card {
     background: var(--surface);
@@ -155,10 +158,23 @@
 </style>
 </head>
 <body>
+{% csrf_token %}
+<!-- Not inside a form — this tag's only job here is to make Django's
+     CsrfViewMiddleware set the csrftoken cookie on page load, which the
+     JS below reads via getCookie() for its fetch() headers. Without this,
+     a plain TemplateView never triggers get_token(), the cookie is never
+     set, and every POST fails CSRF validation with X-CSRFToken: null. -->
 
 <div class="page">
   <header>
-    <h1>LexiLite</h1>
+    <div class="header-top">
+      <h1>LexiLite</h1>
+      {% if request.user.is_authenticated %}
+        <div class="auth-status">Signed in as <strong>{{ request.user.username }}</strong> · <a href="/api-auth/logout/?next=/">Log out</a></div>
+      {% else %}
+        <div class="auth-status"><a href="/api-auth/login/?next=/">Log in</a> to analyze documents</div>
+      {% endif %}
+    </div>
     <p class="subtitle">Upload a contract or paste clause text — get a risk breakdown in seconds.</p>
   </header>
 
@@ -309,7 +325,15 @@
     resultsCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
+  function getCookie(name) {
+    const match = document.cookie.match('(^|;\\s*)' + name + '=([^;]*)');
+    return match ? decodeURIComponent(match[2]) : null;
+  }
+
   async function handleResponse(response) {
+    if (response.status === 403) {
+      throw new Error('You need to be logged in to analyze documents — use the "Log in" link above.');
+    }
     let body;
     try {
       body = await response.json();
@@ -317,7 +341,7 @@
       throw new Error('Unexpected response from server.');
     }
     if (!response.ok) {
-      throw new Error(body.error || 'Something went wrong.');
+      throw new Error(body.error || body.detail || 'Something went wrong.');
     }
     return body;
   }
@@ -336,7 +360,11 @@
         const formData = new FormData();
         formData.append('file', selectedFile);
         setLoading(true);
-        response = await fetch('/api/documents/upload/', { method: 'POST', body: formData });
+        response = await fetch('/api/documents/upload/', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': getCookie('csrftoken') },
+          body: formData,
+        });
       } else {
         const text = document.getElementById('text-input').value.trim();
         if (text.length < 10) {
@@ -346,7 +374,7 @@
         setLoading(true);
         response = await fetch('/api/documents/analyze/', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
           body: JSON.stringify({ text: text, filename: 'pasted-text.txt' }),
         });
       }

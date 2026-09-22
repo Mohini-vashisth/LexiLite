@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -7,6 +8,10 @@ class AnalysisResult(models.Model):
         ('risky', 'Risky'),
     ]
 
+    # Every analysis belongs to whoever ran it (LEX-6) — required, not
+    # nullable, since /analyze and /upload now require authentication, so
+    # every new row always has a real requesting user.
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='analyses')
     document_id = models.CharField(max_length=255, unique=True)
     filename = models.CharField(max_length=255)
     clauses = models.JSONField()
@@ -21,6 +26,7 @@ class AnalysisResult(models.Model):
         indexes = [
             models.Index(fields=['document_id']),
             models.Index(fields=['-created_at']),
+            models.Index(fields=['owner', '-created_at']),
         ]
 
     def __str__(self):

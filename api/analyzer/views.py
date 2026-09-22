@@ -2,8 +2,9 @@ import logging
 import uuid
 import time
 from django.conf import settings
-from rest_framework import viewsets, status
+from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .document_parsers import extract_text_from_upload, UnsupportedFileType, DocumentParseError
@@ -26,7 +27,7 @@ def get_analyzer():
     return _analyzer
 
 
-def _run_analysis(text, filename):
+def _run_analysis(text, filename, owner):
     """
     Shared by both the JSON-text endpoint (analyze) and the file-upload
     endpoint (upload) — everything after "we have plain text" is identical
@@ -58,6 +59,7 @@ def _run_analysis(text, filename):
         analysis = get_analyzer().analyze_clauses(clauses)
 
         AnalysisResult.objects.create(
+            owner=owner,
             document_id=document_id,
             filename=filename,
             clauses=clauses,
@@ -90,10 +92,32 @@ def _run_analysis(text, filename):
         )
 
 
-class DocumentAnalysisViewSet(viewsets.ModelViewSet):
-    """API endpoint for document analysis"""
-    queryset = AnalysisResult.objects.all()
+class DocumentAnalysisViewSet(
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    """API endpoint for document analysis.
+
+    Deliberately NOT a full ModelViewSet — a record is created only as a
+    side effect of `analyze`/`upload` (which set `owner` server-side and
+    populate `analysis` from a real model run), never directly. A raw
+    `POST /api/documents/` via the generic create action would bypass all
+    of that: `owner` isn't in the serializer, so it'd fail with a raw
+    IntegrityError (500) instead of anything sensible. Same reasoning
+    against update/destroy — there's no legitimate reason to hand-edit or
+    delete an analysis record through this API today. Only what's actually
+    supported (list/retrieve of your own records, plus the three custom
+    actions below) is routable.
+    """
     serializer_class = AnalysisResultSerializer
+
+    def get_queryset(self):
+        """Scoped to the requesting user (LEX-6) — this is what /recent/
+        and DRF's other ModelViewSet actions (retrieve, list, etc.) read
+        from, so a user can never see another user's analyses regardless
+        of which action they hit."""
+        return AnalysisResult.objects.filter(owner=self.request.user)
 
     @action(detail=False, methods=['post'])
     def analyze(self, request):
@@ -103,7 +127,7 @@ class DocumentAnalysisViewSet(viewsets.ModelViewSet):
         """
         text = request.data.get('text', '')
         filename = request.data.get('filename', 'unnamed_document')
-        return _run_analysis(text, filename)
+        return _run_analysis(text, filename, owner=request.user)
 
     @action(detail=False, methods=['post'])
     def upload(self, request):
@@ -134,13 +158,14 @@ class DocumentAnalysisViewSet(viewsets.ModelViewSet):
             logger.warning(f"Failed to parse uploaded file '{uploaded_file.name}': {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return _run_analysis(text, uploaded_file.name)
+        return _run_analysis(text, uploaded_file.name, owner=request.user)
 
     @action(detail=False, methods=['get'])
     def recent(self, request):
-        """Get recent analysis results"""
+        """Get recent analysis results — the caller's own only, via
+        get_queryset() (already scoped to request.user)."""
         limit = int(request.query_params.get('limit', 10))
-        results = AnalysisResult.objects.all()[:limit]
+        results = self.get_queryset()[:limit]
         return Response({
             'count': len(results),
             'results': [
@@ -156,7 +181,10 @@ class DocumentAnalysisViewSet(viewsets.ModelViewSet):
 
 
 class HealthCheckView(APIView):
-    """Health check endpoint - used by load balancers"""
+    """Health check endpoint - used by load balancers. Deliberately open —
+    a load balancer/monitoring probe has no user to authenticate as, and
+    the response reveals nothing sensitive (just up/down + model state)."""
+    permission_classes = [AllowAny]
 
     def get(self, request):
         """Check API and model health"""
@@ -178,7 +206,10 @@ class HealthCheckView(APIView):
 
 
 class MetricsView(APIView):
-    """Metrics endpoint for monitoring performance"""
+    """Metrics endpoint for monitoring performance. Deliberately open, same
+    reasoning as HealthCheckView — aggregate operational numbers, nothing
+    user-specific or sensitive."""
+    permission_classes = [AllowAny]
 
     def get(self, request):
         """Get performance metrics. Must never trigger a model load as a

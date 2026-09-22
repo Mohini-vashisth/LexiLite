@@ -19,10 +19,12 @@ from unittest.mock import patch, MagicMock
 import docx
 import numpy as np
 import pymupdf
+from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
+from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from .document_parsers import (
@@ -78,6 +80,8 @@ def fake_analysis(risky_count=1, total_clauses=3):
 class AnalyzeEndpointTests(APITestCase):
     def setUp(self):
         self.url = reverse('document-analyze')
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.client.force_authenticate(user=self.user)
 
     def test_rejects_empty_text(self):
         response = self.client.post(self.url, {'text': '', 'filename': 'a.txt'}, format='json')
@@ -150,6 +154,7 @@ class AnalyzeEndpointTests(APITestCase):
         self.assertEqual(saved.document_id, response.data['document_id'])
         self.assertEqual(saved.filename, 'contract.pdf')
         self.assertEqual(saved.model_used, 'sbert')
+        self.assertEqual(saved.owner, self.user)  # LEX-6: ownership recorded, not just accepted
 
     @patch('analyzer.views.get_analyzer')
     def test_risky_clauses_truncated_to_top_ten(self, mock_get_analyzer):
@@ -190,9 +195,81 @@ class AnalyzeEndpointTests(APITestCase):
         self.assertEqual(AnalysisResult.objects.count(), 0)
 
 
+class AuthenticationRequiredTests(APITestCase):
+    """LEX-6: /analyze, /upload, /recent must all reject unauthenticated
+    requests. Uses a plain (non-force_authenticate) client throughout,
+    since force_authenticate bypasses the real auth mechanism entirely —
+    it proves IsAuthenticated blocks anonymous requests, but wouldn't
+    catch a real wiring bug in TokenAuthentication/SessionAuthentication
+    themselves. The token test below exercises the real header-based path.
+    """
+
+    def test_analyze_rejects_unauthenticated(self):
+        response = self.client.post(
+            reverse('document-analyze'), {'text': 'a' * 20, 'filename': 'a.txt'}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_upload_rejects_unauthenticated(self):
+        upload = SimpleUploadedFile("contract.pdf", make_pdf_bytes("text"), content_type="application/pdf")
+        response = self.client.post(reverse('document-upload'), {'file': upload}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_recent_rejects_unauthenticated(self):
+        response = self.client.get(reverse('document-recent'))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_health_and_metrics_stay_open_when_unauthenticated(self):
+        # These two are deliberately AllowAny — confirms LEX-6 didn't
+        # accidentally lock out infra/monitoring endpoints too. Checking
+        # "not 403" rather than a specific 200, since /health's own status
+        # code legitimately depends on whether the model is loaded
+        # (covered separately by HealthEndpointTests) — that's a different
+        # concern from whether auth is required to reach it at all.
+        self.assertNotEqual(self.client.get(reverse('health')).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertNotEqual(self.client.get(reverse('metrics')).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_raw_create_update_delete_are_not_routed(self):
+        # DocumentAnalysisViewSet is deliberately not a full ModelViewSet —
+        # records are only ever created via analyze/upload (which set
+        # owner server-side). A raw POST here would bypass that and hit
+        # an IntegrityError; confirms it's not reachable at all (405, not
+        # 403 — the method itself isn't registered, regardless of auth).
+        user = User.objects.create_user(username='carol', password='pw')
+        self.client.force_authenticate(user=user)
+
+        list_url = reverse('document-list')
+        response = self.client.post(list_url, {'filename': 'x'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+        record = AnalysisResult.objects.create(
+            owner=user, document_id='d1', filename='a.pdf', clauses=['a'],
+            analysis={'risky_count': 0}, processing_time_ms=1.0, model_used='sbert',
+        )
+        detail_url = reverse('document-detail', args=[record.id])
+        self.assertEqual(self.client.put(detail_url, {}, format='json').status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(self.client.delete(detail_url).status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_real_token_header_authenticates_successfully(self):
+        # Goes through the actual TokenAuthentication class via a real
+        # Authorization header — not force_authenticate — to prove the
+        # signal-created token really works end-to-end, not just that
+        # *some* authenticated request would pass.
+        user = User.objects.create_user(username='bob', password='pw')
+        token = Token.objects.get(user=user)  # auto-created by the post_save signal
+
+        response = self.client.get(
+            reverse('document-recent'), HTTP_AUTHORIZATION=f'Token {token.key}'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
 class RecentEndpointTests(APITestCase):
     def setUp(self):
         self.url = reverse('document-recent')
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.other_user = User.objects.create_user(username='mallory', password='pw')
+        self.client.force_authenticate(user=self.user)
 
     def test_empty_when_no_analyses_exist(self):
         response = self.client.get(self.url)
@@ -201,11 +278,11 @@ class RecentEndpointTests(APITestCase):
 
     def test_returns_created_results(self):
         AnalysisResult.objects.create(
-            document_id='doc-1', filename='one.pdf', clauses=['a'],
+            owner=self.user, document_id='doc-1', filename='one.pdf', clauses=['a'],
             analysis={'risky_count': 2}, processing_time_ms=10.0, model_used='sbert',
         )
         AnalysisResult.objects.create(
-            document_id='doc-2', filename='two.pdf', clauses=['b'],
+            owner=self.user, document_id='doc-2', filename='two.pdf', clauses=['b'],
             analysis={'risky_count': 0}, processing_time_ms=12.0, model_used='sbert',
         )
 
@@ -218,12 +295,29 @@ class RecentEndpointTests(APITestCase):
     def test_respects_limit_query_param(self):
         for i in range(5):
             AnalysisResult.objects.create(
-                document_id=f'doc-{i}', filename=f'{i}.pdf', clauses=['a'],
+                owner=self.user, document_id=f'doc-{i}', filename=f'{i}.pdf', clauses=['a'],
                 analysis={'risky_count': 0}, processing_time_ms=1.0, model_used='sbert',
             )
 
         response = self.client.get(self.url, {'limit': 2})
         self.assertEqual(response.data['count'], 2)
+
+    def test_only_returns_the_authenticated_users_own_results(self):
+        # The actual point of LEX-6's /recent scoping — not just "auth is
+        # required somewhere", but "you specifically can't see someone
+        # else's analyses even though you're logged in as a real user".
+        AnalysisResult.objects.create(
+            owner=self.user, document_id='mine', filename='mine.pdf', clauses=['a'],
+            analysis={'risky_count': 1}, processing_time_ms=1.0, model_used='sbert',
+        )
+        AnalysisResult.objects.create(
+            owner=self.other_user, document_id='theirs', filename='theirs.pdf', clauses=['a'],
+            analysis={'risky_count': 1}, processing_time_ms=1.0, model_used='sbert',
+        )
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['filename'], 'mine.pdf')
 
 
 class HealthEndpointTests(APITestCase):
@@ -396,6 +490,8 @@ class DocumentParserTests(TestCase):
 class UploadEndpointTests(APITestCase):
     def setUp(self):
         self.url = reverse('document-upload')
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.client.force_authenticate(user=self.user)
 
     def test_rejects_missing_file(self):
         response = self.client.post(self.url, {}, format='multipart')

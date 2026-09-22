@@ -24,15 +24,30 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.auth',
+    'django.contrib.sessions',  # needed for session-based login (the browser
+                                 # frontend uses this — token auth alone would
+                                 # mean no way to log in from a web page)
+    'django.contrib.messages',  # required by django.contrib.auth's login
+                                 # flow / the DRF browsable login template
+    'django.contrib.staticfiles',  # serves the DRF browsable-API/login
+                                    # page's CSS — that page has no styling
+                                    # without it
     'rest_framework',
+    'rest_framework.authtoken',  # gives every User a Token for API-key-style
+                                  # auth (Authorization: Token <key>), for
+                                  # programmatic/non-browser clients
     'corsheaders',
     'analyzer',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -42,8 +57,18 @@ TEMPLATES = [
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
         'DIRS': [],
         'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+            ],
+        },
     },
 ]
+
+STATIC_URL = '/static/'
 
 DATABASES = {
     'default': {
@@ -56,6 +81,24 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,
+    # SessionAuthentication: the browser frontend, logged in via
+    # /api-auth/login/, is recognized through its session cookie.
+    # TokenAuthentication: programmatic clients send `Authorization: Token
+    # <key>` instead — no browser/cookies involved.
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    # Everything requires a real, authenticated user by default now.
+    # HealthCheckView/MetricsView override this back to AllowAny — an
+    # infra health check shouldn't need credentials.
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    # Only AnonRateThrottle remains meaningful now — nothing reaches these
+    # views anonymously except the two AllowAny endpoints, and throttling
+    # those by IP is still worth keeping. UserRateThrottle now applies
+    # per-authenticated-user rather than the old blanket default.
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle'
