@@ -2,12 +2,21 @@
 
 ## Overview
 
+<<<<<<< HEAD
 Production-ready Django REST API for legal document analysis with:
 - ✅ **Sub-200ms average latency** on inference
 - ✅ **100+ concurrent requests** handling (4 worker processes)
 - ✅ **Real-time clause analysis** with risk classification
 - ✅ **Caching & batching** for performance optimization
 - ✅ **Health checks** and metrics monitoring
+=======
+Django REST API for legal document analysis with:
+- ✅ **Real-time clause analysis** with risk classification (Sentence-BERT + logistic regression)
+- ✅ **Confidence gating** — low-confidence calls routed to review, not guessed
+- ✅ **PDF/DOCX upload** alongside raw-text analysis
+- ✅ **Health checks** and metrics monitoring
+- ⚠️ Latency/concurrency: see [Performance Characteristics](#performance-characteristics) for real measured numbers and their caveats — the "sub-200ms, 4 workers" figures once claimed here were never actually measured
+>>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 
 ## Quick Start
 
@@ -180,6 +189,7 @@ Get performance metrics.
 
 ## Performance Characteristics
 
+<<<<<<< HEAD
 ### Latency Breakdown
 
 For a 10-clause document:
@@ -213,6 +223,22 @@ Memory per worker: ~200-250MB
 Total (4 workers): ~800MB-1GB
 CPU: Scales with concurrency (cores utilized efficiently)
 ```
+=======
+**Measured 2026-09-22** (`benchmark.py --concurrent 50 --total 100`, 30-clause document, Windows + RTX 5060 Ti, GPU-accelerated `torch+cu128`). See the main [README's Performance section](README.md#performance) for the full writeup and caveats — summarized here:
+
+```
+Success rate:                100/100 (100%)
+API-only latency (mean):     331.4ms
+API-only latency (median):   102.8ms
+API-only latency (p95):      1366.5ms
+API-only latency (p99):      2009.2ms
+Throughput:                  24.5 req/sec
+```
+
+**This was measured against `manage.py runserver` (Django's dev server), not Gunicorn.** The "4 worker processes" throughput/latency figures that used to be here were never measured and have been removed rather than left as a guess. Gunicorn doesn't run on Windows at all (no native process forking), so a real multi-worker number needs Linux (WSL or Docker) — not done yet, not blocking, tracked as a follow-up rather than blocking this doc on it.
+
+No resource-usage (memory/CPU) numbers are published here — they were never actually measured, only guessed at previously.
+>>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 
 ---
 
@@ -419,6 +445,7 @@ watch -n 30 'curl -s http://localhost:8000/api/health/ | jq'
 
 ---
 
+<<<<<<< HEAD
 ## Performance Report Template
 
 Use this when demonstrating performance:
@@ -443,6 +470,36 @@ Use this when demonstrating performance:
 
 ✅ GOAL ACHIEVED: Sub-200ms average latency
 ✅ GOAL ACHIEVED: 100+ concurrent requests
+=======
+## Performance Report (actual, not a template)
+
+The block below was previously a fabricated example presented as an achieved result — replaced with what was actually measured. Re-run `benchmark.py` and update this whenever the setup changes (different hardware, Gunicorn instead of the dev server, etc.) rather than reverting to invented numbers.
+
+```
+LexiLite REST API — Performance Report
+Measured: 2026-09-22
+
+Test Configuration
+  Concurrent requests: 50
+  Total requests: 100 (capped by DRF's 100/hour anon throttle — see below)
+  Server: manage.py runserver (Django dev server, NOT Gunicorn)
+  Hardware: Windows, NVIDIA RTX 5060 Ti, torch+cu128 (GPU-accelerated)
+
+Results
+  Success rate:              100/100 (100%)
+  API latency (mean):        331.4ms
+  API latency (median):      102.8ms
+  API latency (p95):         1366.5ms
+  API latency (p99):         2009.2ms
+  Throughput:                24.5 req/sec
+
+NOT achieved at these settings: sub-200ms mean latency, or a true
+100+ concurrent production benchmark (the dev server serializes GPU
+work rather than truly parallelizing it — see README.md#performance
+for why). A representative production number needs Gunicorn's
+multi-worker setup, which requires Linux (WSL/Docker) since Gunicorn
+doesn't run on Windows.
+>>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 ```
 
 ---
