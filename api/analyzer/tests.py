@@ -461,3 +461,23 @@ class UploadEndpointTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['filename'], 'contract.docx')
         self.assertEqual(response.data['risky_count'], 0)
+
+
+class FrontendPageTests(TestCase):
+    """The upload/results page (LEX-5). Just checks it renders and wires up
+    to the real endpoint paths — the JS behavior itself isn't exercised by
+    Django's test client (no browser), that's a manual/visual check."""
+
+    def test_index_page_renders(self):
+        response = self.client.get(reverse('index'))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'LexiLite', response.content)
+
+    def test_index_page_references_real_api_paths(self):
+        # Regression guard: if the upload/analyze URL names ever change,
+        # this page's hardcoded fetch() paths would silently break with
+        # no server-side error — this test exists so *something* fails
+        # loudly instead.
+        response = self.client.get(reverse('index'))
+        self.assertIn(reverse('document-upload').encode(), response.content)
+        self.assertIn(reverse('document-analyze').encode(), response.content)

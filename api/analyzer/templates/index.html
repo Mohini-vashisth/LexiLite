@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LexiLite — Contract Risk Analyzer</title>
+<style>
+  :root {
+    --bg: #f4f5f2;
+    --surface: #ffffff;
+    --ink: #1b1e1a;
+    --ink-soft: #55584f;
+    --line: #d8dad2;
+    --risky: #b3402c;
+    --risky-bg: #fbeeec;
+    --safe: #2f6f5c;
+    --safe-bg: #eaf3ef;
+    --accent: #2f6f5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.5;
+  }
+  .page { max-width: 820px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+  header { margin-bottom: 2.5rem; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 0.4rem; }
+  .subtitle { color: var(--ink-soft); font-size: 15px; margin: 0; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 1.2rem; }
+  .tab-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--ink-soft);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .drop-zone {
+    display: block; /* labels are inline by default — without this, the
+                        padding/border below don't reserve layout space and
+                        the box just overlaps whatever's above/below it */
+    border: 2px dashed var(--line);
+    border-radius: 8px;
+    padding: 2.5rem 1rem;
+    text-align: center;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .drop-zone.dragover { border-color: var(--accent); background: var(--safe-bg); }
+  .drop-zone input[type="file"] { display: none; }
+  .drop-zone .filename { color: var(--ink); font-weight: 500; margin-top: 0.5rem; }
+
+  textarea {
+    width: 100%;
+    min-height: 180px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 14px;
+    resize: vertical;
+  }
+
+  .actions { display: flex; align-items: center; gap: 12px; margin-top: 1rem; }
+  button.primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 10px 22px;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.primary:hover:not(:disabled) { opacity: 0.9; }
+
+  .error-msg {
+    color: var(--risky);
+    font-size: 13.5px;
+    margin-top: 0.6rem;
+    display: none;
+  }
+  .error-msg.visible { display: block; }
+
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: none;
+  }
+  .spinner.visible { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #results { display: none; }
+  #results.visible { display: block; }
+
+  .summary-row { display: flex; gap: 12px; margin-bottom: 1.2rem; }
+  .stat {
+    flex: 1;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .stat .label { font-size: 12px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.03em; }
+  .stat .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .stat.risky .value { color: var(--risky); }
+
+  .clause {
+    border-left: 3px solid var(--risky);
+    background: var(--risky-bg);
+    border-radius: 0 6px 6px 0;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .clause .clause-text { font-size: 14px; margin-bottom: 6px; }
+  .clause .clause-meta { font-size: 12.5px; color: var(--ink-soft); display: flex; justify-content: space-between; }
+  .confidence-bar {
+    height: 4px;
+    background: var(--line);
+    border-radius: 2px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .confidence-bar-fill { height: 100%; background: var(--risky); }
+
+  .no-risky {
+    text-align: center;
+    color: var(--safe);
+    padding: 1.5rem;
+    background: var(--safe-bg);
+    border-radius: 8px;
+    font-size: 15px;
+  }
+
+  footer { margin-top: 3rem; font-size: 12.5px; color: var(--ink-soft); text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header>
+    <h1>LexiLite</h1>
+    <p class="subtitle">Upload a contract or paste clause text — get a risk breakdown in seconds.</p>
+  </header>
+
+  <div class="card">
+    <div class="tabs">
+      <button type="button" class="tab-btn active" data-tab="file">Upload file</button>
+      <button type="button" class="tab-btn" data-tab="text">Paste text</button>
+    </div>
+
+    <div id="tab-file">
+      <label class="drop-zone" id="drop-zone" for="file-input">
+        <div>Drag a PDF or DOCX here, or click to choose a file</div>
+        <div class="filename" id="filename-display"></div>
+        <input type="file" id="file-input" accept=".pdf,.docx">
+      </label>
+    </div>
+
+    <div id="tab-text" style="display:none;">
+      <textarea id="text-input" placeholder="Paste contract text here (minimum 10 characters)..."></textarea>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="analyze-btn">
+        <span class="spinner" id="spinner"></span>
+        <span id="btn-label">Analyze</span>
+      </button>
+    </div>
+    <div class="error-msg" id="error-msg"></div>
+  </div>
+
+  <div id="results" class="card">
+    <div class="summary-row">
+      <div class="stat">
+        <div class="label">Filename</div>
+        <div class="value" id="result-filename" style="font-size: 15px;"></div>
+      </div>
+      <div class="stat">
+        <div class="label">Total clauses</div>
+        <div class="value" id="result-total"></div>
+      </div>
+      <div class="stat risky">
+        <div class="label">Risky clauses</div>
+        <div class="value" id="result-risky-count"></div>
+      </div>
+      <div class="stat">
+        <div class="label">Processing time</div>
+        <div class="value" id="result-time" style="font-size: 15px;"></div>
+      </div>
+    </div>
+    <div id="clause-list"></div>
+  </div>
+
+  <footer>
+    LexiLite classifies clauses as safe or risky using a trained model — it is not legal advice.
+  </footer>
+</div>
+
+<script>
+(function () {
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  const tabFile = document.getElementById('tab-file');
+  const tabText = document.getElementById('tab-text');
+  let activeTab = 'file';
+
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeTab = btn.dataset.tab;
+      tabFile.style.display = activeTab === 'file' ? 'block' : 'none';
+      tabText.style.display = activeTab === 'text' ? 'block' : 'none';
+      hideError();
+    });
+  });
+
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const filenameDisplay = document.getElementById('filename-display');
+  let selectedFile = null;
+
+  function setSelectedFile(file) {
+    selectedFile = file;
+    filenameDisplay.textContent = file ? file.name : '';
+  }
+
+  fileInput.addEventListener('change', () => {
+    setSelectedFile(fileInput.files[0] || null);
+  });
+
+  ['dragover', 'dragenter'].forEach(evt =>
+    dropZone.addEventListener(evt, (e) => { e.preventDefault(); dropZone.classList.add('dragover'); })
+  );
+  ['dragleave', 'drop'].forEach(evt =>
+    dropZone.addEventListener(evt, (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); })
+  );
+  dropZone.addEventListener('drop', (e) => {
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      fileInput.files = e.dataTransfer.files;
+      setSelectedFile(file);
+    }
+  });
+
+  const errorMsg = document.getElementById('error-msg');
+  function showError(msg) { errorMsg.textContent = msg; errorMsg.classList.add('visible'); }
+  function hideError() { errorMsg.classList.remove('visible'); }
+
+  const analyzeBtn = document.getElementById('analyze-btn');
+  const spinner = document.getElementById('spinner');
+  const btnLabel = document.getElementById('btn-label');
+  const resultsCard = document.getElementById('results');
+
+  function setLoading(isLoading) {
+    analyzeBtn.disabled = isLoading;
+    spinner.classList.toggle('visible', isLoading);
+    btnLabel.textContent = isLoading ? 'Analyzing…' : 'Analyze';
+  }
+
+  function renderResults(data) {
+    document.getElementById('result-filename').textContent = data.filename;
+    document.getElementById('result-total').textContent = data.total_clauses;
+    document.getElementById('result-risky-count').textContent = data.risky_count;
+    document.getElementById('result-time').textContent = data.processing_time_ms.toFixed(0) + 'ms';
+
+    const list = document.getElementById('clause-list');
+    list.innerHTML = '';
+
+    if (data.risky_clauses.length === 0) {
+      const div = document.createElement('div');
+      div.className = 'no-risky';
+      div.textContent = 'No risky clauses found in this document.';
+      list.appendChild(div);
+    } else {
+      data.risky_clauses.forEach(clause => {
+        const div = document.createElement('div');
+        div.className = 'clause';
+        const pct = Math.round(clause.confidence * 100);
+        div.innerHTML =
+          '<div class="clause-text"></div>' +
+          '<div class="clause-meta"><span>Risky</span><span>' + pct + '% confidence</span></div>' +
+          '<div class="confidence-bar"><div class="confidence-bar-fill" style="width:' + pct + '%"></div></div>';
+        div.querySelector('.clause-text').textContent = clause.text;
+        list.appendChild(div);
+      });
+    }
+
+    resultsCard.classList.add('visible');
+    resultsCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  async function handleResponse(response) {
+    let body;
+    try {
+      body = await response.json();
+    } catch (e) {
+      throw new Error('Unexpected response from server.');
+    }
+    if (!response.ok) {
+      throw new Error(body.error || 'Something went wrong.');
+    }
+    return body;
+  }
+
+  analyzeBtn.addEventListener('click', async () => {
+    hideError();
+    resultsCard.classList.remove('visible');
+
+    try {
+      let response;
+      if (activeTab === 'file') {
+        if (!selectedFile) {
+          showError('Choose a PDF or DOCX file first.');
+          return;
+        }
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        setLoading(true);
+        response = await fetch('/api/documents/upload/', { method: 'POST', body: formData });
+      } else {
+        const text = document.getElementById('text-input').value.trim();
+        if (text.length < 10) {
+          showError('Paste at least 10 characters of contract text.');
+          return;
+        }
+        setLoading(true);
+        response = await fetch('/api/documents/analyze/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text, filename: 'pasted-text.txt' }),
+        });
+      }
+
+      const data = await handleResponse(response);
+      renderResults(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
