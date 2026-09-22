@@ -13,6 +13,7 @@ __pycache__/
 # Model files
 /saved_model_cuad_model/
 /saved_model_ledgar_model/
+/train_model/saved_model/
 
 /data/*.csv
 
