@@ -4,21 +4,12 @@ Production-ready Django REST API for real-time legal document analysis.
 
 ## Features
 
-<<<<<<< HEAD
-✅ **Sub-200ms latency** - Optimized inference pipeline  
-✅ **100+ concurrent requests** - Multi-worker Gunicorn setup  
-✅ **Real-time analysis** - Instant clause risk classification  
-✅ **Batch processing** - Efficient model encoding  
-✅ **Performance monitoring** - Built-in metrics & health checks  
-✅ **Production-ready** - Docker, Nginx config, load balancing  
-=======
 ✅ **Real-time analysis** - Clause risk classification via Sentence-BERT + logistic regression
 ✅ **Batch processing** - Efficient model encoding
 ✅ **Confidence gating** - Low-confidence calls routed to review instead of guessed (see [Confidence gating](#confidence-gating) below)
 ✅ **Performance monitoring** - Built-in metrics & health checks
 ✅ **PDF/DOCX upload** - Not just raw text
 ✅ **Containerized** - Docker build verified end-to-end (see [Performance](#performance) for what's measured vs. what's still aspirational)
->>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 
 ## Quick Start
 
@@ -68,17 +59,6 @@ curl -X POST http://localhost:8000/api/documents/analyze/ \
 
 ## Performance
 
-<<<<<<< HEAD
-```
-Average Latency:  ~145ms
-P95 Latency:      ~180ms
-P99 Latency:      ~250ms
-Throughput:       ~700 req/sec
-Concurrent Limit: 100+
-Success Rate:     >99.8%
-```
-
-=======
 **Measured 2026-09-22** — real numbers from `benchmark.py --concurrent 50 --total 100`, run against a live server on Windows with an NVIDIA RTX 5060 Ti (GPU-accelerated inference, `torch+cu128`). The `--total 200` originally planned here isn't achievable against a single anonymous client without changes — DRF's default throttle caps anonymous requests at 100/hour, and the throttle counts every attempt (see `settings.py`'s `AnonRateThrottle`).
 
 **Important caveat:** this was measured against Django's development server (`manage.py runserver`), **not** the Gunicorn/4-worker setup described elsewhere in this doc. The dev server is largely single-process, so concurrent requests queue rather than truly running in parallel — the numbers below reflect that, not the production architecture. Gunicorn doesn't run natively on Windows (it depends on Unix process forking), so a true multi-worker benchmark needs Linux (WSL or Docker) and is tracked separately, not blocking here.
@@ -94,7 +74,6 @@ Throughput:                 24.5 req/sec
 
 The wide spread between median and p95/p99 is real, not noise: the first ~30-50 concurrent requests show steadily *climbing* latency (GPU work queueing behind a single CUDA stream, likely compounded by CUDA kernel warm-up), then later requests in the same batch drop to 13-30ms once the GPU is warm. A production deployment with proper multi-process serving would behave differently — this specific number describes the dev server under load, not a ceiling on the architecture.
 
->>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 ## Documentation
 
 See [API_DOCS.md](API_DOCS.md) for:
@@ -190,24 +169,6 @@ api/
 └── README.md               # This file
 ```
 
-<<<<<<< HEAD
-## Performance Report
-
-**Test Configuration:**
-- 100 concurrent requests
-- 1,000 total requests
-- 4 Gunicorn workers
-- Sentence-BERT model
-
-**Results:**
-```
-Total Latency (avg): 145ms ✅ (< 200ms goal)
-Total Latency (P95): 180ms ✅
-Throughput:         687 req/sec
-Success Rate:       99.9%
-```
-
-=======
 ## Confidence Gating
 
 **Measured 2026-09-22** via `measure_confidence_impact.py` against the real trained classifier (2,330-clause held-out test set):
@@ -221,7 +182,6 @@ Reduction from adding the margin check:  0.0%
 
 **The margin check currently does nothing** — this isn't a rounding artifact, it's a mathematical property of the current settings. With a binary classifier, `margin = 2 × confidence - 1`, so any clause clearing the `confidence ≥ 0.65` bar automatically has `margin ≥ 0.30`, already above the `min_margin = 0.15` threshold. The margin condition can never be the deciding factor at these values. Tracked as [LEX-13](https://linear.app/lakshya-mehta/issue/LEX-13/confidence-gates-margin-check-is-mathematically-dead-code) — fixing it means raising `min_margin` above 0.30, or removing the check as dead weight if it's not worth tuning further.
 
->>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 ## Troubleshooting
 
 ### Models not loading
@@ -245,15 +205,8 @@ ModelCache()
 ## Contributing
 
 This API is designed to be:
-<<<<<<< HEAD
-- **Fast** - Sub-200ms inference latency
-- **Scalable** - Handle 100+ concurrent requests
-- **Reliable** - >99% uptime
-- **Maintainable** - Clean code, good documentation
-=======
 - **Correct** - confidence gating over guessing, tests before claims
 - **Maintainable** - clean code, documentation that matches measured reality, not aspiration
->>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 
 ## License
 

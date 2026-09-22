@@ -2,21 +2,12 @@
 
 ## Overview
 
-<<<<<<< HEAD
-Production-ready Django REST API for legal document analysis with:
-- ✅ **Sub-200ms average latency** on inference
-- ✅ **100+ concurrent requests** handling (4 worker processes)
-- ✅ **Real-time clause analysis** with risk classification
-- ✅ **Caching & batching** for performance optimization
-- ✅ **Health checks** and metrics monitoring
-=======
 Django REST API for legal document analysis with:
 - ✅ **Real-time clause analysis** with risk classification (Sentence-BERT + logistic regression)
 - ✅ **Confidence gating** — low-confidence calls routed to review, not guessed
 - ✅ **PDF/DOCX upload** alongside raw-text analysis
 - ✅ **Health checks** and metrics monitoring
 - ⚠️ Latency/concurrency: see [Performance Characteristics](#performance-characteristics) for real measured numbers and their caveats — the "sub-200ms, 4 workers" figures once claimed here were never actually measured
->>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 
 ## Quick Start
 
@@ -189,41 +180,6 @@ Get performance metrics.
 
 ## Performance Characteristics
 
-<<<<<<< HEAD
-### Latency Breakdown
-
-For a 10-clause document:
-
-```
-Total Request Time: ~150-180ms
-├── Network overhead: ~5-10ms
-├── Django request handling: ~3-5ms
-├── Model inference: ~120-160ms
-│   ├── Sentence-BERT encoding: ~50-80ms
-│   └── Logistic Regression prediction: ~30-50ms
-└── Response serialization: ~2-5ms
-```
-
-### Throughput
-
-With **4 worker processes** (Gunicorn):
-
-```
-Concurrent Requests: 100
-Requests/Second: ~600-800
-P95 Latency: ~180-220ms
-P99 Latency: ~250-300ms
-Success Rate: >99.8%
-```
-
-### Resource Usage
-
-```
-Memory per worker: ~200-250MB
-Total (4 workers): ~800MB-1GB
-CPU: Scales with concurrency (cores utilized efficiently)
-```
-=======
 **Measured 2026-09-22** (`benchmark.py --concurrent 50 --total 100`, 30-clause document, Windows + RTX 5060 Ti, GPU-accelerated `torch+cu128`). See the main [README's Performance section](README.md#performance) for the full writeup and caveats — summarized here:
 
 ```
@@ -238,7 +194,6 @@ Throughput:                  24.5 req/sec
 **This was measured against `manage.py runserver` (Django's dev server), not Gunicorn.** The "4 worker processes" throughput/latency figures that used to be here were never measured and have been removed rather than left as a guess. Gunicorn doesn't run on Windows at all (no native process forking), so a real multi-worker number needs Linux (WSL or Docker) — not done yet, not blocking, tracked as a follow-up rather than blocking this doc on it.
 
 No resource-usage (memory/CPU) numbers are published here — they were never actually measured, only guessed at previously.
->>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 
 ---
 
@@ -445,32 +400,6 @@ watch -n 30 'curl -s http://localhost:8000/api/health/ | jq'
 
 ---
 
-<<<<<<< HEAD
-## Performance Report Template
-
-Use this when demonstrating performance:
-
-```
-╔════════════════════════════════════════════════════╗
-║     LexiLite REST API Performance Report          ║
-╚════════════════════════════════════════════════════╝
-
-📊 Test Configuration
-   • Concurrent requests: 100
-   • Total requests: 1,000
-   • Worker processes: 4
-   • Duration: ~90 seconds
-
-📈 Results
-   • Total latency (P50): 142ms ✅
-   • Total latency (P95): 185ms ✅
-   • Total latency (P99): 245ms ✅
-   • Success rate: 99.9% ✅
-   • Throughput: 687 req/sec ✅
-
-✅ GOAL ACHIEVED: Sub-200ms average latency
-✅ GOAL ACHIEVED: 100+ concurrent requests
-=======
 ## Performance Report (actual, not a template)
 
 The block below was previously a fabricated example presented as an achieved result — replaced with what was actually measured. Re-run `benchmark.py` and update this whenever the setup changes (different hardware, Gunicorn instead of the dev server, etc.) rather than reverting to invented numbers.
@@ -499,7 +428,6 @@ work rather than truly parallelizing it — see README.md#performance
 for why). A representative production number needs Gunicorn's
 multi-worker setup, which requires Linux (WSL/Docker) since Gunicorn
 doesn't run on Windows.
->>>>>>> 1755eacc1db1e31d4ea54b90ba2892f8931cda7d
 ```
 
 ---
