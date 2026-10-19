@@ -7,13 +7,20 @@ skewed 85/15 safe/risky (see train_model/data/legal_clauses_labeled.csv),
 that means low-margin "risky" calls are disproportionately wrong.
 
 Approach: LogisticRegression already gives calibrated-ish probabilities via
-predict_proba (that's what it optimizes). We threshold on:
-  1. The winning class's probability (raw confidence) — reject if it's not
-     comfortably above the majority-class base rate.
-  2. The margin between the top two classes — reject if the model is nearly
-     torn (e.g. 0.52 vs 0.48), regardless of the absolute probability.
+predict_proba (that's what it optimizes). We threshold on the winning class's
+probability (raw confidence) — reject if it's not comfortably above the
+majority-class base rate.
 
-Below both thresholds, don't force a hard label. Route the clause to an
+An optional second gate on the margin (top prob - runner-up prob) exists but
+is OFF by default. For a binary classifier it adds nothing: the two
+probabilities sum to 1, so margin = 2*p - 1, and "margin >= m" is exactly
+"confidence >= (1 + m) / 2". It can never reject a clause the confidence
+threshold didn't already reject (or, if m is large, it just *is* a higher
+confidence threshold under a different name — tune min_confidence instead).
+It only carries independent information with 3+ classes, where a clause can
+have a high top probability yet a near-tie with the second class (LEX-13).
+
+Below the threshold, don't force a hard label. Route the clause to an
 'uncertain' bucket that the caller can escalate to a human reviewer or a
 stronger model (RoBERTa) rather than silently emitting a possibly-wrong
 high-confidence-looking answer.
@@ -31,13 +38,14 @@ class ConfidenceScorer:
         line and above the ~0.15 base rate of the minority ('risky') class,
         so a low-confidence 'risky' call (model close to uncertain) doesn't
         get reported as if it were solid.
-    min_margin: reject predictions where (top prob - second prob) is below
-        this. Catches cases where min_confidence alone would still pass
-        (e.g. 0.66 vs 0.34 is fine, but 0.51 vs 0.49 should never pass even
-        if min_confidence were set low).
+    min_margin: optional. If set, also reject predictions where
+        (top prob - second prob) is below this. Default None (disabled):
+        redundant for binary classifiers, see the module docstring. Only
+        worth setting for 3+ class models. The margin is still computed and
+        reported in every result either way.
     """
 
-    def __init__(self, min_confidence=0.65, min_margin=0.15):
+    def __init__(self, min_confidence=0.65, min_margin=None):
         self.min_confidence = min_confidence
         self.min_margin = min_margin
 
@@ -65,7 +73,9 @@ class ConfidenceScorer:
             margin = top_prob - second_prob
             raw_label = class_labels[top_idx]
 
-            accepted = top_prob >= self.min_confidence and margin >= self.min_margin
+            accepted = top_prob >= self.min_confidence and (
+                self.min_margin is None or margin >= self.min_margin
+            )
 
             results.append({
                 'label': raw_label if accepted else 'uncertain',
