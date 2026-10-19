@@ -1,7 +1,7 @@
 # Build from the REPO ROOT, not api/, since the trained model files live in
 # train_model/ as a sibling of api/ and both need to end up in the image:
 #   docker build -f api/Dockerfile -t lexilite-api .
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 

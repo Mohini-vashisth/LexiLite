@@ -14,10 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Python 3.9 to match api/Dockerfile (python:3.9-slim).
+      # Python 3.12 to match api/Dockerfile (python:3.12-slim).
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: api/requirements.txt
 
@@ -38,11 +38,11 @@ jobs:
         run: python manage.py test analyzer
 
   dependency-audit:
-    # Reports known CVEs in the pinned packages. Not blocking yet: the
-    # remaining Django findings are only fixed in Django 5.2+, which needs
-    # Python 3.10+ (tracked as its own ticket).
+    # Fails the run if any pinned package has a known CVE (all clean as of
+    # the Django 5.2 upgrade, LEX-14). Not a *required* check for merging, so
+    # a newly published advisory turns the run red without blocking unrelated
+    # PRs; fix it by bumping the pin.
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
