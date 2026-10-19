@@ -28,6 +28,7 @@ def get_analyzer():
 
 
 MAX_FILENAME_LENGTH = 255  # AnalysisResult.filename column size
+MAX_RISKY_RETURNED = 50  # most-risky-first; risky_count in the response is the full total
 
 
 def _run_analysis(text, filename, owner):
@@ -62,6 +63,14 @@ def _run_analysis(text, filename, owner):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        clauses_truncated = len(clauses) > settings.MAX_CLAUSES_PER_DOCUMENT
+        if clauses_truncated:
+            logger.warning(
+                f"Document {document_id} has {len(clauses)} clauses; "
+                f"analyzing the first {settings.MAX_CLAUSES_PER_DOCUMENT}"
+            )
+            clauses = clauses[:settings.MAX_CLAUSES_PER_DOCUMENT]
+
         analysis = get_analyzer().analyze_clauses(clauses)
 
         AnalysisResult.objects.create(
@@ -84,8 +93,13 @@ def _run_analysis(text, filename, owner):
             'document_id': document_id,
             'filename': filename,
             'total_clauses': analysis['total_clauses'],
+            'clauses_truncated': clauses_truncated,
             'risky_count': analysis['risky_count'],
-            'risky_clauses': analysis['risky_clauses'][:10],  # Top 10
+            # Most risky first (LEX-17: this used to be the first 10 in
+            # document order, which only looked fine with page-sized chunks).
+            'risky_clauses': sorted(
+                analysis['risky_clauses'], key=lambda r: r['risky_prob'], reverse=True
+            )[:MAX_RISKY_RETURNED],
             'processing_time_ms': round(analysis['processing_time_ms'], 2),
             'api_response_time_ms': round(total_time_ms, 2),
         }, status=status.HTTP_201_CREATED)

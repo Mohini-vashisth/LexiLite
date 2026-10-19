@@ -17,6 +17,12 @@ TRAIN_MODEL_DIR = os.getenv('TRAIN_MODEL_DIR', str(BASE_DIR.parent / 'train_mode
 # no async/queued processing path yet (see LEX-8/ops backlog).
 MAX_UPLOAD_SIZE_BYTES = int(os.getenv('MAX_UPLOAD_SIZE_BYTES', 10 * 1024 * 1024))
 
+# Cap on clause-sized chunks analyzed per document (LEX-17). Segmentation now
+# yields roughly 10 chunks per page, so a long contract can run to hundreds.
+# When a document exceeds the cap the response says so (`clauses_truncated`)
+# rather than silently dropping the tail.
+MAX_CLAUSES_PER_DOCUMENT = int(os.getenv('MAX_CLAUSES_PER_DOCUMENT', 500))
+
 _DEV_SECRET_KEY = 'dev-key-change-in-production'
 # LEX-9 data retention: analyses (which contain the full text of the analyzed
 # contract) are deleted after this many days by `manage.py purge_expired_analyses`.

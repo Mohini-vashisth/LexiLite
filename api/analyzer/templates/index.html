@@ -101,6 +101,15 @@
     display: none;
   }
   .error-msg.visible { display: block; }
+  .result-note {
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+  }
 
   .spinner {
     width: 16px; height: 16px;
@@ -224,6 +233,7 @@
         <div class="value" id="result-time" style="font-size: 15px;"></div>
       </div>
     </div>
+    <div id="result-notes"></div>
     <div id="clause-list"></div>
   </div>
 
@@ -298,6 +308,21 @@
     document.getElementById('result-total').textContent = data.total_clauses;
     document.getElementById('result-risky-count').textContent = data.risky_count;
     document.getElementById('result-time').textContent = data.processing_time_ms.toFixed(0) + 'ms';
+
+    const notes = document.getElementById('result-notes');
+    notes.innerHTML = '';
+    const addNote = msg => {
+      const n = document.createElement('div');
+      n.className = 'result-note';
+      n.textContent = msg;
+      notes.appendChild(n);
+    };
+    if (data.risky_count > data.risky_clauses.length) {
+      addNote('Showing the ' + data.risky_clauses.length + ' highest-risk clauses of ' + data.risky_count + ' flagged.');
+    }
+    if (data.clauses_truncated) {
+      addNote('This document is very long: only the first ' + data.total_clauses + ' clauses were analyzed; the rest was not.');
+    }
 
     const list = document.getElementById('clause-list');
     list.innerHTML = '';

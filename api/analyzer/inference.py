@@ -3,6 +3,8 @@ import time
 import logging
 import joblib
 import numpy as np
+
+from .segmentation import segment_clauses
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
@@ -92,18 +94,10 @@ class LegalAnalyzer:
         }
 
     def extract_clauses(self, text):
-        """Extract clauses from text by splitting on common legal delimiters"""
-        delimiters = ['\n\n', '\n', '  ']
-        clauses = []
-
-        for delimiter in delimiters:
-            if delimiter in text:
-                clauses = text.split(delimiter)
-                break
-
-        # Filter empty clauses and strip whitespace
-        clauses = [c.strip() for c in clauses if c.strip()]
-        return clauses[:100]  # Limit to 100 clauses per document
+        """Split document text into clause-sized chunks (see segmentation.py).
+        Returns ALL chunks; the per-document cap is applied by the caller so
+        it can tell the user when a document was cut short."""
+        return segment_clauses(text)
 
     def analyze_clauses(self, clauses):
         """Analyze clauses for risk - optimized for latency"""
@@ -145,7 +139,10 @@ class LegalAnalyzer:
         for i, (clause, pred, probs) in enumerate(zip(clauses, predictions, probabilities)):
             results.append({
                 'clause_id': i,
-                'text': clause[:200],  # Truncate for response
+                # The full chunk that was scored (<= ~800 chars after
+                # segmentation) — not a prefix, so what the user reads is
+                # what the model saw (LEX-17).
+                'text': clause,
                 'risk': pred,
                 'confidence': float(np.max(probs)),
                 'safe_prob': float(probs[safe_idx]),

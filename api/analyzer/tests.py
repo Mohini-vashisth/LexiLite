@@ -157,17 +157,19 @@ class AnalyzeEndpointTests(APITestCase):
         self.assertEqual(saved.owner, self.user)  # LEX-6: ownership recorded, not just accepted
 
     @patch('analyzer.views.get_analyzer')
-    def test_risky_clauses_truncated_to_top_ten(self, mock_get_analyzer):
+    def test_risky_clauses_are_most_risky_first_and_capped(self, mock_get_analyzer):
+        # 60 risky clauses with distinct scores, deliberately NOT in score order
         many_risky = [
-            {'clause_id': i, 'text': f'clause {i}', 'risk': 'risky', 'confidence': 0.8, 'safe_prob': 0.2, 'risky_prob': 0.8}
-            for i in range(15)
+            {'clause_id': i, 'text': f'clause {i}', 'risk': 'risky', 'confidence': 0.5 + (i * 7 % 60) / 130,
+             'safe_prob': 0.0, 'risky_prob': 0.5 + (i * 7 % 60) / 130}
+            for i in range(60)
         ]
         analysis = fake_analysis()
         analysis['risky_clauses'] = many_risky
-        analysis['risky_count'] = 15
+        analysis['risky_count'] = 60
 
         mock_analyzer = MagicMock()
-        mock_analyzer.extract_clauses.return_value = ['x'] * 15
+        mock_analyzer.extract_clauses.return_value = ['x'] * 60
         mock_analyzer.analyze_clauses.return_value = analysis
         mock_get_analyzer.return_value = mock_analyzer
 
@@ -175,9 +177,15 @@ class AnalyzeEndpointTests(APITestCase):
             self.url, {'text': 'a' * 20, 'filename': 'big.pdf'}, format='json'
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        # response.risky_clauses is capped even though the full analysis had 15
-        self.assertEqual(len(response.data['risky_clauses']), 10)
-        self.assertEqual(response.data['risky_count'], 15)
+        # capped at 50 even though the full analysis had 60; the total is still reported
+        shown = response.data['risky_clauses']
+        self.assertEqual(len(shown), 50)
+        self.assertEqual(response.data['risky_count'], 60)
+        # and they are the 50 highest-scoring ones, highest first
+        scores = [c['risky_prob'] for c in shown]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertEqual(scores[0], max(c['risky_prob'] for c in many_risky))
+        self.assertGreaterEqual(min(scores), sorted((c['risky_prob'] for c in many_risky), reverse=True)[49])
 
     @patch('analyzer.views.get_analyzer')
     def test_internal_error_during_analysis_returns_500_not_a_crash(self, mock_get_analyzer):
@@ -809,3 +817,153 @@ class FallbackRouterTests(TestCase):
             raise RuntimeError('secondary model down')
         decision = self._router(boom).resolve('clause', self._primary(False, 'uncertain', 0.55))
         self.assertEqual(decision['source'], 'human_review')
+
+
+class SegmentationTests(TestCase):
+    """LEX-17: PDF-style text must become clause-sized chunks, losing nothing."""
+
+    def seg(self, text, **kw):
+        from .segmentation import segment_clauses
+        return segment_clauses(text, **kw)
+
+    @staticmethod
+    def words(s):
+        import re
+        return re.findall(r"[A-Za-z0-9$]+", s)
+
+    def test_empty_and_whitespace_give_no_chunks(self):
+        self.assertEqual(self.seg(''), [])
+        self.assertEqual(self.seg('  \n \n  '), [])
+
+    def test_page_headers_and_bare_page_numbers_are_dropped(self):
+        text = ("Page 1 \nThe Supplier shall deliver the goods within thirty days of the order date. \n"
+                "Page 2 of 9 \n12\n- 3 -\nThe Customer shall pay each invoice within forty-five days of receipt. \n")
+        chunks = self.seg(text)
+        self.assertFalse(any('Page' in c for c in chunks))
+        self.assertTrue(any('deliver the goods' in c for c in chunks))
+        self.assertTrue(any('forty-five days' in c for c in chunks))
+
+    def test_hard_wrapped_lines_are_rejoined_into_one_clause(self):
+        text = ("1) The Supplier agrees to maintain the required insurance coverage for a period of \n"
+                "three (3) years after the expiration of this Agreement and any extensions \n"
+                "thereof, at its own expense. \n")
+        (chunk,) = self.seg(text)
+        self.assertIn('period of three (3) years after the expiration', chunk)
+        self.assertNotIn('\n', chunk)
+
+    def test_numbered_items_become_separate_clauses(self):
+        text = ("3) Comprehensive General Liability Insurance in the minimum amount of one million dollars. \n \n"
+                "4) Professional Liability Insurance in the minimum amount of one million dollars, if initialed. \n \n"
+                "5) Workers Compensation Insurance as required by the laws of the State of California. \n")
+        chunks = self.seg(text)
+        self.assertEqual(len(chunks), 3)
+        self.assertTrue(chunks[1].startswith('4)'))
+
+    def test_numbering_splits_even_without_blank_lines(self):
+        text = ("3) Comprehensive General Liability Insurance in the minimum amount of one \nmillion dollars each occurrence \n"
+                "4) Professional Liability Insurance in the minimum amount of one \nmillion dollars each claim \n")
+        chunks = self.seg(text)
+        self.assertEqual(len(chunks), 2)
+        self.assertTrue(chunks[0].startswith('3)') and chunks[1].startswith('4)'))
+
+    def test_heading_travels_with_the_clause_that_follows_it(self):
+        text = ("B. Other Insurance Provisions \n"
+                "1) If any insurance coverage required in this Agreement is provided on a claims made form, the \n"
+                "Consultant agrees to maintain the required coverage for three years. \n")
+        (chunk,) = self.seg(text)
+        self.assertTrue(chunk.startswith('B. Other Insurance Provisions 1) If any insurance'))
+
+    def test_a_clause_that_runs_across_a_page_break_stays_whole(self):
+        text = ("1) The Consultant shall indemnify and hold harmless the Commission from any claim arising \n"
+                "Page 5 \n"
+                "out of the Consultant's negligence or willful misconduct under this Agreement. \n")
+        (chunk,) = self.seg(text)
+        self.assertIn('any claim arising out of the Consultant', chunk)
+
+    def test_simple_one_clause_per_line_paste_is_preserved(self):
+        text = ("The Supplier shall deliver the goods within thirty days of the order. \n"
+                "The Customer shall pay each invoice within forty-five days of receipt. \n"
+                "Either party may terminate this Agreement on thirty days written notice. \n")
+        self.assertEqual(len(self.seg(text)), 3)
+
+    def test_blank_line_separated_paragraphs_are_preserved(self):
+        text = ("The Supplier shall deliver the goods within thirty days of the order, time being of the essence.\n\n"
+                "The Customer shall pay each invoice within forty-five days of receipt of a valid invoice.")
+        self.assertEqual(len(self.seg(text)), 2)
+
+    def test_long_paragraph_is_split_at_sentences_within_the_limit(self):
+        sentence = "The Consultant shall comply with all applicable laws and regulations of the jurisdiction. "
+        chunks = self.seg(sentence * 40, max_chars=800)
+        self.assertGreater(len(chunks), 3)
+        self.assertTrue(all(len(c) <= 840 for c in chunks), [len(c) for c in chunks])
+        # packed greedily at sentence boundaries: no chunk starts mid-sentence
+        self.assertTrue(all(c.startswith('The Consultant') for c in chunks))
+
+    def test_one_endless_sentence_is_hard_split_never_truncated(self):
+        text = ' '.join(f'word{i}' for i in range(600))  # ~4,000 chars, no punctuation at all
+        chunks = self.seg(text, max_chars=800)
+        self.assertTrue(all(len(c) <= 840 for c in chunks))
+        self.assertEqual(self.words(' '.join(chunks)), self.words(text))
+
+    def test_no_words_are_lost_on_a_multi_page_contract(self):
+        import textwrap
+        paragraphs = [
+            f"{n}) The Consultant shall perform obligation number {n} under this Agreement in a professional "
+            f"manner, and shall indemnify the Commission against any claim arising from that performance, "
+            f"including reasonable attorney fees, costs and expenses incurred. Further obligations apply."
+            for n in range(1, 41)
+        ]
+        pages, page_no = [], 1
+        for i in range(0, len(paragraphs), 4):
+            body = '\n \n'.join(textwrap.fill(p, 95) + ' ' for p in paragraphs[i:i + 4])
+            pages.append(f"Page {page_no} \n{body}\n")
+            page_no += 1
+        text = '\n'.join(pages)
+
+        chunks = self.seg(text)
+        original = self.words(' '.join(p for p in paragraphs))
+        self.assertEqual(self.words(' '.join(chunks)), original)
+        # 10 pages used to give 10 page-sized "clauses"; now it gives one per numbered clause
+        self.assertEqual(len(chunks), 40)
+        self.assertLessEqual(max(len(c) for c in chunks), 800)
+
+    def test_analyzer_extract_clauses_uses_the_segmenter_and_returns_everything(self):
+        analyzer = LegalAnalyzer.__new__(LegalAnalyzer)
+        text = '\n \n'.join(f"{n}) Clause number {n} states an obligation that is long enough to stand alone here." for n in range(1, 151))
+        self.assertEqual(len(analyzer.extract_clauses(text)), 150)  # no silent 100-clause cap any more
+
+
+class ClauseCapAndTextTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse('document-analyze')
+
+    def _post(self, n_clauses):
+        with patch('analyzer.views.get_analyzer') as mock_get:
+            analyzer = mock_get.return_value
+            analyzer.extract_clauses.return_value = [f'clause {i}' for i in range(n_clauses)]
+            analyzer.analyze_clauses.side_effect = lambda clauses: {
+                'total_clauses': len(clauses), 'risky_count': 0, 'risky_clauses': [], 'processing_time_ms': 1.0,
+            }
+            response = self.client.post(self.url, {'text': 'a long enough document', 'filename': 'a.pdf'}, format='json')
+            return response, analyzer
+
+    @override_settings(MAX_CLAUSES_PER_DOCUMENT=3)
+    def test_long_document_is_capped_and_says_so(self):
+        response, analyzer = self._post(5)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['clauses_truncated'])
+        self.assertEqual(response.data['total_clauses'], 3)
+        self.assertEqual(len(analyzer.analyze_clauses.call_args[0][0]), 3)
+
+    @override_settings(MAX_CLAUSES_PER_DOCUMENT=3)
+    def test_short_document_is_not_flagged_as_truncated(self):
+        response, _ = self._post(3)
+        self.assertFalse(response.data['clauses_truncated'])
+
+    def test_analyze_clauses_returns_the_full_clause_text_not_a_200_char_prefix(self):
+        analyzer = ProbabilityMappingRegressionTests()._analyzer_with_fake_classifier(['risky', 'safe'])
+        long_clause = 'The Consultant shall indemnify the Commission. ' * 15  # ~700 chars
+        returned = analyzer.analyze_clauses([long_clause])['all_clauses'][0]['text']
+        self.assertEqual(returned, long_clause)
