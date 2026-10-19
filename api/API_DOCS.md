@@ -4,7 +4,7 @@
 
 Django REST API for legal document analysis with:
 - ✅ **Real-time clause analysis** with risk classification (Sentence-BERT + logistic regression)
-- ✅ **Confidence gating** — low-confidence calls routed to review, not guessed
+- ⚠️ **Confidence scores** — every risky clause includes its `confidence`; a threshold gate that would route low-confidence clauses to review is built and measured but not yet applied by the endpoint (see [README](README.md#confidence-gating))
 - ✅ **PDF/DOCX upload** alongside raw-text analysis
 - ✅ **Authentication** — every endpoint except `/health/` and `/metrics/` requires a real user (LEX-6); each user only ever sees their own analysis history
 - ✅ **Data retention** — analyses expire after `RETENTION_DAYS` (default 30); users can delete their own data. See [DATA_POLICY.md](DATA_POLICY.md) for what is stored and what is not encrypted

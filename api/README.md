@@ -7,7 +7,7 @@ Production-ready Django REST API for real-time legal document analysis.
 ✅ **Real-time analysis** - Clause risk classification via Sentence-BERT + logistic regression
 ✅ **Batch processing** - Efficient model encoding
 ✅ **Authenticated** - session login for the browser page, API tokens for scripts — every user only sees their own analysis history (see [API_DOCS.md](API_DOCS.md#authentication))
-✅ **Confidence gating** - Low-confidence calls routed to review instead of guessed (see [Confidence gating](#confidence-gating) below)
+⚠️ **Confidence gating** - implemented and measured (`analyzer/confidence.py`), but **not yet applied by the live endpoint**: every response reports each clause's confidence, but nothing is routed to review yet (see [Confidence gating](#confidence-gating) below)
 ✅ **Performance monitoring** - Built-in metrics & health checks
 ✅ **PDF/DOCX upload** - Not just raw text
 ✅ **Data retention** - analyses auto-expire after 30 days and users can delete their own data (see [DATA_POLICY.md](DATA_POLICY.md))
@@ -175,16 +175,27 @@ api/
 
 ## Confidence Gating
 
-**Measured 2026-09-22** via `measure_confidence_impact.py` against the real trained classifier (2,330-clause held-out test set):
+**Status: built and measured, not yet wired into `/analyze`.** The live API returns each risky clause with its `confidence`, but does not mark low-confidence clauses `uncertain` or route them anywhere. Wiring it in is tracked as [LEX-16](https://linear.app/lakshya-mehta/issue/LEX-16).
+
+**Measured 2026-10-19** with `python measure_confidence_impact.py` (run on the PC, RTX 5060 Ti) against the real trained classifier, on the 2,330-clause held-out test set (324 truly risky):
 
 ```
-Confidently answered (both thresholds): 2,209 / 2,330 (94.8%)
-Wrong among those:                      65 (2.9% error rate)
-Routed to 'uncertain' (coverage cost):   121 (5.2%)
-Reduction from adding the margin check:  0.0%
+min_conf  answered  coverage  error (answered)  uncertain  risky recall
+    0.50      2330   100.0%             5.11%          0        74.1%   <- no gate (plain argmax)
+    0.55      2296    98.5%             4.66%         34        71.3%
+    0.60      2251    96.6%             3.78%         79        67.3%
+    0.65      2209    94.8%             2.94%        121        64.8%   <- current default
+    0.70      2157    92.6%             2.50%        173        61.1%
+    0.75      2108    90.5%             1.94%        222        56.2%
+    0.80      2035    87.3%             1.33%        295        51.5%
+    0.85      1949    83.6%             0.82%        381        43.5%
+    0.90      1808    77.6%             0.44%        522        34.0%
+    0.95      1540    66.1%             0.32%        790        21.9%
 ```
 
-**The margin check currently does nothing** — this isn't a rounding artifact, it's a mathematical property of the current settings. With a binary classifier, `margin = 2 × confidence - 1`, so any clause clearing the `confidence ≥ 0.65` bar automatically has `margin ≥ 0.30`, already above the `min_margin = 0.15` threshold. The margin condition can never be the deciding factor at these values. Tracked as [LEX-13](https://linear.app/lakshya-mehta/issue/LEX-13/confidence-gates-margin-check-is-mathematically-dead-code) — fixing it means raising `min_margin` above 0.30, or removing the check as dead weight if it's not worth tuning further.
+How to read it: at the default 0.65 the model answers 94.8% of clauses and its error rate on those drops from 5.11% to 2.94% (a ~42% relative reduction). **The cost is real:** 121 clauses become `uncertain`, and only 64.8% of truly risky clauses are both answered and flagged risky (74.1% with no gate). For a tool whose job is finding risky clauses, that recall drop is the number to weigh, and `uncertain` clauses are only useful if something handles them (a secondary model, LEX-8, or a human).
+
+**The margin check was removed from the defaults (LEX-13).** For a binary classifier `margin = 2 × confidence − 1`, so "margin ≥ m" is exactly "confidence ≥ (1 + m) / 2": it can never reject anything the confidence threshold doesn't already reject. `ConfidenceScorer(min_margin=...)` still exists, off by default, because it does carry independent information with 3+ classes. To make the gate stricter for this model, raise `min_confidence` (see the table).
 
 ## Troubleshooting
 
