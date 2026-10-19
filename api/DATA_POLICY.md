@@ -4,7 +4,9 @@ What the API stores about your documents, why, for how long, and how to remove i
 
 ## What is stored
 
-For every document analyzed via `/api/documents/analyze/` or `/upload/`, one `AnalysisResult` row:
+Nothing, by default. A document analysed via `/api/documents/analyze/` or `/upload/` is read in memory, the result is returned, and nothing is written to the database.
+
+Only if the request sets `save` to true is one `AnalysisResult` row created:
 
 | Field | Contents |
 |---|---|

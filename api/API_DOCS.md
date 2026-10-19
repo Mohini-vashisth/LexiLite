@@ -72,18 +72,21 @@ All endpoints below require authentication (see [Authentication](#authentication
 
 Analyze a legal document for risky clauses.
 
+Nothing is stored unless you send `"save": true`. Without it, the result is returned and discarded.
+
 **Request:**
 ```json
 {
   "text": "Full document text here...",
-  "filename": "contract.pdf"
+  "filename": "contract.pdf",
+  "save": false
 }
 ```
 
-**Response (201 Created):**
+**Response (201 Created):** `document_id` is included only when `save` is true.
 ```json
 {
-  "document_id": "550e8400-e29b-41d4-a716-446655440000",
+  "saved": false,
   "filename": "contract.pdf",
   "total_clauses": 42,
   "risky_count": 3,
@@ -117,14 +120,14 @@ Analyze a legal document for risky clauses.
 
 Analyze an uploaded PDF or DOCX file — same response shape as `/analyze`, but the text is extracted from the file server-side instead of being sent as JSON.
 
-**Request:** `multipart/form-data` with a `file` field.
+**Request:** `multipart/form-data` with a `file` field and an optional `save=true` field. Nothing is stored unless `save` is `true`.
 
 ```bash
 curl -X POST http://localhost:8000/api/documents/upload/ \
   -F "file=@contract.pdf"
 ```
 
-**Response (201 Created):** identical shape to `/analyze` (see above) — `filename` is taken from the uploaded file's name.
+**Response (201 Created):** same shape as `/analyze` (see above), including the `saved` flag. `filename` is taken from the uploaded file's name.
 
 **Error Responses (400):**
 ```json

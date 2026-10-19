@@ -30,12 +30,27 @@ def get_analyzer():
 MAX_FILENAME_LENGTH = 255  # AnalysisResult.filename column size
 
 
-def _run_analysis(text, filename, owner):
+def _wants_save(value):
+    """`save` arrives as a JSON boolean from /analyze and as a form string
+    ('true'/'false') from /upload. Anything that isn't clearly true means
+    don't save: storage is opt-in, so a missing or odd value must not
+    create a record."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('true', '1', 'yes')
+
+
+def _run_analysis(text, filename, owner, save=False):
     """
     Shared by both the JSON-text endpoint (analyze) and the file-upload
     endpoint (upload) — everything after "we have plain text" is identical
     regardless of where that text came from, so it lives in one place
     rather than being copy-pasted between the two views.
+
+    By default nothing is written to the database: the contract is read,
+    analysed and the result returned. A record is created only when the
+    caller passes save=True, and only then is a document_id returned to use
+    for later retrieval or deletion.
 
     Returns a DRF Response ready to hand back to the caller.
     """
@@ -51,9 +66,6 @@ def _run_analysis(text, filename, owner):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        document_id = str(uuid.uuid4())
-        logger.info(f"Analyzing document {document_id} ({len(text)} chars)")
-
         clauses = get_analyzer().extract_clauses(text)
 
         if not clauses:
@@ -64,31 +76,37 @@ def _run_analysis(text, filename, owner):
 
         analysis = get_analyzer().analyze_clauses(clauses)
 
-        AnalysisResult.objects.create(
-            owner=owner,
-            document_id=document_id,
-            filename=filename,
-            clauses=clauses,
-            analysis=analysis,
-            processing_time_ms=analysis['processing_time_ms'],
-            model_used='sbert',
-        )
+        document_id = None
+        if save:
+            document_id = str(uuid.uuid4())
+            AnalysisResult.objects.create(
+                owner=owner,
+                document_id=document_id,
+                filename=filename,
+                clauses=clauses,
+                analysis=analysis,
+                processing_time_ms=analysis['processing_time_ms'],
+                model_used='sbert',
+            )
 
         total_time_ms = (time.time() - start_time) * 1000
         logger.info(
             f"✓ Analysis complete: {len(clauses)} clauses, "
-            f"{analysis['risky_count']} risky, {total_time_ms:.1f}ms"
+            f"{analysis['risky_count']} risky, saved={save}, {total_time_ms:.1f}ms"
         )
 
-        return Response({
-            'document_id': document_id,
+        response_data = {
+            'saved': save,
             'filename': filename,
             'total_clauses': analysis['total_clauses'],
             'risky_count': analysis['risky_count'],
             'risky_clauses': analysis['risky_clauses'][:10],  # Top 10
             'processing_time_ms': round(analysis['processing_time_ms'], 2),
             'api_response_time_ms': round(total_time_ms, 2),
-        }, status=status.HTTP_201_CREATED)
+        }
+        if document_id is not None:
+            response_data['document_id'] = document_id
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
     except Exception:
         # LEX-9: log the details server-side, but never echo str(e) to the
@@ -109,8 +127,9 @@ class DocumentAnalysisViewSet(
     """API endpoint for document analysis.
 
     Deliberately NOT a full ModelViewSet — a record is created only as a
-    side effect of `analyze`/`upload` (which set `owner` server-side and
-    populate `analysis` from a real model run), never directly. A raw
+    side effect of `analyze`/`upload` with save=true (which set `owner`
+    server-side and populate `analysis` from a real model run), never
+    directly. Without save=true, nothing is stored at all. A raw
     `POST /api/documents/` via the generic create action would bypass all
     of that: `owner` isn't in the serializer, so it'd fail with a raw
     IntegrityError (500) instead of anything sensible. Same reasoning
@@ -132,18 +151,21 @@ class DocumentAnalysisViewSet(
     def analyze(self, request):
         """
         Analyze a legal document for risky clauses.
-        POST body: {"text": "document text", "filename": "optional.pdf"}
+        POST body: {"text": "document text", "filename": "optional.pdf", "save": false}
+        Nothing is stored unless "save" is true.
         """
         text = request.data.get('text', '')
         filename = request.data.get('filename', 'unnamed_document')
-        return _run_analysis(text, filename, owner=request.user)
+        save = _wants_save(request.data.get('save', False))
+        return _run_analysis(text, filename, owner=request.user, save=save)
 
     @action(detail=False, methods=['post'])
     def upload(self, request):
         """
         Analyze an uploaded PDF or DOCX file for risky clauses.
-        POST multipart/form-data with a `file` field.
-        Returns the same response shape as /analyze.
+        POST multipart/form-data with a `file` field and optional `save=true`.
+        Returns the same response shape as /analyze. Nothing is stored unless
+        `save` is true.
         """
         uploaded_file = request.FILES.get('file')
         if uploaded_file is None:
@@ -167,7 +189,8 @@ class DocumentAnalysisViewSet(
             logger.warning(f"Failed to parse uploaded file '{uploaded_file.name}': {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return _run_analysis(text, uploaded_file.name, owner=request.user)
+        save = _wants_save(request.data.get('save', False))
+        return _run_analysis(text, uploaded_file.name, owner=request.user, save=save)
 
     @action(detail=False, methods=['delete'], url_path='delete-all')
     def delete_all(self, request):

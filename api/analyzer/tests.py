@@ -125,7 +125,7 @@ class AnalyzeEndpointTests(APITestCase):
         self.assertIn('No clauses', response.data['error'])
 
     @patch('analyzer.views.get_analyzer')
-    def test_successful_analysis_returns_expected_shape_and_persists(self, mock_get_analyzer):
+    def test_successful_analysis_returns_expected_shape_and_persists_when_saved(self, mock_get_analyzer):
         mock_analyzer = MagicMock()
         mock_analyzer.extract_clauses.return_value = ['Clause one.', 'Clause two.', 'Clause three.']
         mock_analyzer.analyze_clauses.return_value = fake_analysis(risky_count=1, total_clauses=3)
@@ -133,7 +133,7 @@ class AnalyzeEndpointTests(APITestCase):
 
         response = self.client.post(
             self.url,
-            {'text': 'Clause one. Clause two. Clause three.', 'filename': 'contract.pdf'},
+            {'text': 'Clause one. Clause two. Clause three.', 'filename': 'contract.pdf', 'save': True},
             format='json',
         )
 
@@ -142,19 +142,56 @@ class AnalyzeEndpointTests(APITestCase):
         self.assertEqual(response.data['total_clauses'], 3)
         self.assertEqual(response.data['risky_count'], 1)
         self.assertEqual(len(response.data['risky_clauses']), 1)
+        self.assertTrue(response.data['saved'])
         self.assertIn('document_id', response.data)
         self.assertIn('processing_time_ms', response.data)
         self.assertIn('api_response_time_ms', response.data)
 
-        # Side effect that matters as much as the response: a record must
-        # actually be persisted, since /recent and future history features
-        # depend on it existing.
+        # When the user asked to save, the record must actually be persisted,
+        # so the returned document_id can be used later.
         self.assertEqual(AnalysisResult.objects.count(), 1)
         saved = AnalysisResult.objects.first()
         self.assertEqual(saved.document_id, response.data['document_id'])
         self.assertEqual(saved.filename, 'contract.pdf')
         self.assertEqual(saved.model_used, 'sbert')
         self.assertEqual(saved.owner, self.user)  # LEX-6: ownership recorded, not just accepted
+
+    @patch('analyzer.views.get_analyzer')
+    def test_analysis_stores_nothing_by_default(self, mock_get_analyzer):
+        mock_analyzer = MagicMock()
+        mock_analyzer.extract_clauses.return_value = ['Clause one.', 'Clause two.']
+        mock_analyzer.analyze_clauses.return_value = fake_analysis(risky_count=1, total_clauses=2)
+        mock_get_analyzer.return_value = mock_analyzer
+
+        response = self.client.post(
+            self.url,
+            {'text': 'Clause one. Clause two.', 'filename': 'contract.pdf'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(response.data['saved'])
+        self.assertNotIn('document_id', response.data)
+        self.assertEqual(response.data['risky_count'], 1)
+        self.assertEqual(AnalysisResult.objects.count(), 0)
+
+    @patch('analyzer.views.get_analyzer')
+    def test_only_a_true_save_value_stores_the_analysis(self, mock_get_analyzer):
+        mock_analyzer = MagicMock()
+        mock_analyzer.extract_clauses.return_value = ['Clause one.', 'Clause two.']
+        mock_analyzer.analyze_clauses.return_value = fake_analysis(risky_count=0, total_clauses=2)
+        mock_get_analyzer.return_value = mock_analyzer
+
+        for value in (False, 'false', 'no', None, 0, ''):
+            with self.subTest(save=value):
+                response = self.client.post(
+                    self.url,
+                    {'text': 'Clause one. Clause two.', 'save': value},
+                    format='json',
+                )
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                self.assertNotIn('document_id', response.data)
+        self.assertEqual(AnalysisResult.objects.count(), 0)
 
     @patch('analyzer.views.get_analyzer')
     def test_risky_clauses_truncated_to_top_ten(self, mock_get_analyzer):
@@ -535,7 +572,7 @@ class UploadEndpointTests(APITestCase):
             make_pdf_bytes("Clause one. Clause two."),
             content_type="application/pdf",
         )
-        response = self.client.post(self.url, {'file': upload}, format='multipart')
+        response = self.client.post(self.url, {'file': upload, 'save': 'true'}, format='multipart')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['filename'], 'contract.pdf')
@@ -543,6 +580,25 @@ class UploadEndpointTests(APITestCase):
         self.assertEqual(response.data['risky_count'], 1)
         self.assertEqual(AnalysisResult.objects.count(), 1)
         self.assertEqual(AnalysisResult.objects.first().filename, 'contract.pdf')
+
+    @patch('analyzer.views.get_analyzer')
+    def test_upload_stores_nothing_by_default(self, mock_get_analyzer):
+        mock_analyzer = MagicMock()
+        mock_analyzer.extract_clauses.return_value = ['Clause one.', 'Clause two.']
+        mock_analyzer.analyze_clauses.return_value = fake_analysis(risky_count=1, total_clauses=2)
+        mock_get_analyzer.return_value = mock_analyzer
+
+        upload = SimpleUploadedFile(
+            "contract.pdf",
+            make_pdf_bytes("Clause one. Clause two."),
+            content_type="application/pdf",
+        )
+        response = self.client.post(self.url, {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(response.data['saved'])
+        self.assertNotIn('document_id', response.data)
+        self.assertEqual(AnalysisResult.objects.count(), 0)
 
     @patch('analyzer.views.get_analyzer')
     def test_successful_docx_upload(self, mock_get_analyzer):
