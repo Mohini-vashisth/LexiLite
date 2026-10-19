@@ -1,7 +1,10 @@
 import logging
 import uuid
 import time
+from datetime import timedelta
 from django.conf import settings
+from django.utils import timezone
+from django.views.generic import TemplateView
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -11,6 +14,7 @@ from .document_parsers import extract_text_from_upload, UnsupportedFileType, Doc
 from .models import AnalysisResult
 from .serializers import AnalysisResultSerializer
 from .inference import LegalAnalyzer
+from .ip_review import review_ip_clauses
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +79,7 @@ def _run_analysis(text, filename, owner, save=False):
             )
 
         analysis = get_analyzer().analyze_clauses(clauses)
+        ip_review = review_ip_clauses(clauses)
 
         document_id = None
         if save:
@@ -98,6 +103,7 @@ def _run_analysis(text, filename, owner, save=False):
         response_data = {
             'saved': save,
             'filename': filename,
+            'ip_review': ip_review,
             'total_clauses': analysis['total_clauses'],
             'risky_count': analysis['risky_count'],
             'risky_clauses': analysis['risky_clauses'][:10],  # Top 10
@@ -144,8 +150,15 @@ class DocumentAnalysisViewSet(
         """Scoped to the requesting user (LEX-6) — this is what /recent/
         and DRF's other ModelViewSet actions (retrieve, list, etc.) read
         from, so a user can never see another user's analyses regardless
-        of which action they hit."""
-        return AnalysisResult.objects.filter(owner=self.request.user)
+        of which action they hit.
+
+        Also hides analyses past RETENTION_DAYS on read, so expiry does not
+        depend on the purge command having run (see DATA_POLICY.md)."""
+        queryset = AnalysisResult.objects.filter(owner=self.request.user)
+        if settings.RETENTION_DAYS > 0:
+            cutoff = timezone.now() - timedelta(days=settings.RETENTION_DAYS)
+            queryset = queryset.filter(created_at__gte=cutoff)
+        return queryset
 
     @action(detail=False, methods=['post'])
     def analyze(self, request):
@@ -275,3 +288,25 @@ class MetricsView(APIView):
             **metrics,
             'message': f"Average latency: {metrics['avg_latency_ms']:.1f}ms ({metrics['total_requests']} requests)"
         })
+
+
+class IndexView(TemplateView):
+    """The browser page. Adds the sample report, built by running the real
+    IP review on the fixture contract, so the page's example can't drift
+    from what the product outputs (see tests.SampleReportTests)."""
+    template_name = 'index.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['sample_report'] = sample_report()
+        return context
+
+
+def sample_report():
+    """Run the IP review on analyzer/fixtures/sample_contract.txt, split into
+    paragraphs. Used for the page's example and checked by a test."""
+    import os
+    path = os.path.join(os.path.dirname(__file__), 'fixtures', 'sample_contract.txt')
+    with open(path, encoding='utf-8') as f:
+        clauses = [p.strip() for p in f.read().split('\n\n') if p.strip()]
+    return review_ip_clauses(clauses)

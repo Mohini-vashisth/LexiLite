@@ -865,3 +865,130 @@ class FallbackRouterTests(TestCase):
             raise RuntimeError('secondary model down')
         decision = self._router(boom).resolve('clause', self._primary(False, 'uncertain', 0.55))
         self.assertEqual(decision['source'], 'human_review')
+
+
+class IpReviewTests(TestCase):
+    """The IP-assignment review: the only contract type LexiLite checks."""
+
+    def test_unreadable_input_is_reported_not_treated_as_clean(self):
+        from .ip_review import review_ip_clauses
+        for clauses in ([], ['', '   '], None):
+            with self.subTest(clauses=clauses):
+                review = review_ip_clauses(clauses)
+                self.assertTrue(review['unreadable'])
+                self.assertEqual(review['flags'], [])
+
+    def test_non_ip_clauses_are_not_checked_and_not_flagged(self):
+        from .ip_review import review_ip_clauses
+        review = review_ip_clauses([
+            'Client will pay each invoice within 30 days of acceptance of the deliverable.',
+            'Freelancer liability shall be unlimited.',
+        ])
+        self.assertFalse(review['unreadable'])
+        self.assertEqual(review['ip_clause_count'], 0)
+        self.assertEqual(review['flags'], [])
+
+    def test_every_result_states_scope_and_draft_status(self):
+        from .ip_review import review_ip_clauses, REVIEW_STATUS
+        review = review_ip_clauses(['All work product vests in Client upon creation.'])
+        self.assertEqual(review['status'], REVIEW_STATUS)
+        self.assertIn('IP assignment', review['checked_scope'])
+        self.assertIn('Liability and indemnity', review['not_checked'])
+
+    def test_ownership_before_payment_is_not_flagged_when_payment_is_a_condition(self):
+        from .ip_review import review_ip_clauses
+        conditional = review_ip_clauses([
+            'Ownership of the work product passes to Client upon creation, but only once the invoice is paid in full.',
+        ])
+        ids = [i['id'] for f in conditional['flags'] for i in f['issues']]
+        self.assertNotIn('ownership_before_payment', ids)
+
+        unconditional = review_ip_clauses([
+            'Ownership of the work product passes to Client upon creation.',
+        ])
+        ids = [i['id'] for f in unconditional['flags'] for i in f['issues']]
+        self.assertIn('ownership_before_payment', ids)
+
+    def test_every_issue_carries_reason_paste_sentence_and_lawyer_note(self):
+        from .ip_review import review_ip_clauses
+        review = review_ip_clauses([
+            'All work product vests in Client upon creation. Freelancer waives all moral rights.',
+        ])
+        self.assertTrue(review['flags'])
+        for flag in review['flags']:
+            for issue in flag['issues']:
+                self.assertTrue(issue['reason'])
+                self.assertTrue(issue['paste_sentence'])
+                self.assertTrue(issue['lawyer_when'])
+
+
+class SampleReportTests(TestCase):
+    """The page's example is produced by the real review on a fixture contract.
+    If the library changes what it flags on that contract, this test fails, so
+    the example cannot quietly drift from the product."""
+
+    EXPECTED_FLAGS = {
+        4: ['all_work_assigned', 'ownership_before_payment'],
+        5: ['pre_existing_materials'],
+        6: ['perpetual_or_worldwide'],
+        7: ['moral_rights_waiver'],
+    }
+
+    def test_sample_report_flags_match_the_reviewed_library_output(self):
+        from .views import sample_report
+        report = sample_report()
+        flagged = {f['clause_id']: [i['id'] for i in f['issues']] for f in report['flags']}
+        self.assertEqual(flagged, self.EXPECTED_FLAGS)
+        self.assertEqual(report['ip_clause_count'], 4)
+
+    def test_sample_report_is_shown_on_the_page(self):
+        response = self.client.get(reverse('index'))
+        self.assertContains(response, 'sample-report-data')
+        self.assertContains(response, 'IP assignment clauses only')
+        self.assertContains(response, 'draft, pending lawyer review')
+
+
+class ExpiryOnReadTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.client.force_authenticate(user=self.user)
+
+    @override_settings(RETENTION_DAYS=30)
+    def test_expired_analysis_is_not_returned_even_if_purge_has_not_run(self):
+        old = _make_result(self.user, 'old', age_days=40)
+        fresh = _make_result(self.user, 'fresh', age_days=5)
+
+        recent = self.client.get(reverse('document-recent'))
+        self.assertEqual([r['document_id'] for r in recent.data['results']], ['fresh'])
+        self.assertEqual(self.client.get(reverse('document-detail', args=[old.pk])).status_code, 404)
+        self.assertEqual(self.client.get(reverse('document-detail', args=[fresh.pk])).status_code, 200)
+
+    @override_settings(RETENTION_DAYS=0)
+    def test_zero_retention_disables_expiry_on_read(self):
+        old = _make_result(self.user, 'old', age_days=400)
+        self.assertEqual(self.client.get(reverse('document-detail', args=[old.pk])).status_code, 200)
+
+
+class IpReviewInResponseTests(APITestCase):
+    def setUp(self):
+        self.url = reverse('document-analyze')
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.client.force_authenticate(user=self.user)
+
+    @patch('analyzer.views.get_analyzer')
+    def test_analyze_response_includes_the_ip_review(self, mock_get_analyzer):
+        mock_analyzer = MagicMock()
+        mock_analyzer.extract_clauses.return_value = [
+            'All work product vests in Client upon creation.',
+            'Freelancer liability shall be unlimited.',
+        ]
+        mock_analyzer.analyze_clauses.return_value = fake_analysis(risky_count=1, total_clauses=2)
+        mock_get_analyzer.return_value = mock_analyzer
+
+        response = self.client.post(self.url, {'text': 'x' * 40, 'filename': 'c.pdf'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        review = response.data['ip_review']
+        self.assertEqual(review['ip_clause_count'], 1)
+        self.assertEqual(review['flags'][0]['clause_id'], 0)
+        self.assertEqual(review['status'], 'draft_pending_lawyer_review')

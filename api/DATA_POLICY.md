@@ -29,7 +29,8 @@ Only if the request sets `save` to true is one `AnalysisResult` row created:
 Analyses are automatically deleted **30 days** after creation.
 
 - Configure with the `RETENTION_DAYS` environment variable (`0` disables automatic deletion).
-- Deletion is performed by a management command that must be scheduled (daily is plenty):
+- Expired analyses are hidden from every read endpoint as soon as they pass the limit, so expiry does not depend on the command below having run.
+- Deletion from the database is performed by a management command that must be scheduled (daily is plenty):
 
 ```bash
 python manage.py purge_expired_analyses             # uses RETENTION_DAYS
@@ -37,7 +38,7 @@ python manage.py purge_expired_analyses --dry-run   # report only
 python manage.py purge_expired_analyses --days 7    # override for one run
 ```
 
-Nothing deletes data automatically unless this command is scheduled (cron on Linux, Task Scheduler on Windows).
+Hidden-on-read is not deletion: expired rows stay in the database until this command runs. Schedule it (cron on Linux, Task Scheduler on Windows).
 
 ## Deleting your data
 

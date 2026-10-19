@@ -1,0 +1,23 @@
+SERVICES AGREEMENT (SAMPLE, FICTIONAL)
+
+This agreement is between Northwind Retail Pvt Ltd ("Client") and the freelancer named in the statement of work ("Freelancer").
+
+1. Scope. Freelancer will provide UI design services as described in the statement of work.
+
+2. Payment. Client will pay each invoice within 30 days of Client's written acceptance of the deliverable. Client may withhold acceptance at its sole discretion.
+
+3. Ownership of work. All work product, including all deliverables, designs and any materials created in connection with this agreement, vests in Client immediately upon creation.
+
+4. Pre-existing materials. Freelancer's templates and icon libraries may be incorporated into deliverables, and Client shall own all such materials upon incorporation.
+
+5. Licence. Client receives a perpetual, irrevocable, worldwide licence to use the deliverables in any medium.
+
+6. Moral rights. Freelancer waives all moral rights in the deliverables.
+
+7. Liability. Freelancer's liability for any claim arising under this agreement shall be unlimited.
+
+8. Confidentiality. Each party will keep the other's non-public information confidential for three years after termination.
+
+9. Non-solicitation. Neither party will solicit the other's employees for twelve months after termination.
+
+10. Governing law. This agreement is governed by the laws of India. Courts at Mumbai shall have exclusive jurisdiction.

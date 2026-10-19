@@ -83,7 +83,26 @@ Nothing is stored unless you send `"save": true`. Without it, the result is retu
 }
 ```
 
-**Response (201 Created):** `document_id` is included only when `save` is true.
+**Response (201 Created):** `document_id` is included only when `save` is true. `ip_review` is the result that the page shows: it covers IP-assignment clauses only, and states what was not checked. Its wording is a draft pending lawyer review.
+```json
+"ip_review": {
+  "status": "draft_pending_lawyer_review",
+  "checked_scope": "IP assignment clauses (ownership of work, pre-existing materials, licences, moral rights)",
+  "not_checked": ["Payment terms", "Liability and indemnity", "..."],
+  "unreadable": false,
+  "ip_clause_count": 4,
+  "flags": [
+    {
+      "clause_id": 3,
+      "clause_text": "All work product ... vests in Client upon creation.",
+      "issues": [
+        {"id": "all_work_assigned", "reason": "...", "paste_sentence": "...", "lawyer_when": "..."}
+      ]
+    }
+  ]
+}
+```
+The older `risky_clauses` fields are the general classifier output and are not shown on the page.
 ```json
 {
   "saved": false,

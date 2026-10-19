@@ -155,6 +155,24 @@
   }
 
   footer { margin-top: 3rem; font-size: 12.5px; color: var(--ink-soft); text-align: center; }
+  .scope { font-size: 14px; color: var(--muted, #888); margin: 0.4rem 0 0; }
+  .promise { font-size: 14px; margin: 0.8rem 0 0; }
+  .promise summary { cursor: pointer; }
+  .promise ul { margin: 0.4rem 0 0 1.1rem; padding: 0; }
+  .sample-note { font-size: 13px; color: var(--muted, #888); margin: 0 0 0.8rem; }
+  .flag { border-top: 1px solid rgba(128,128,128,0.25); padding: 0.9rem 0; }
+  .flag-clause { font-style: italic; margin: 0 0 0.5rem; }
+  .issue { margin: 0.5rem 0 0; }
+  .issue-reason { margin: 0 0 0.3rem; }
+  .paste { background: rgba(128,128,128,0.12); border-radius: 6px; padding: 0.5rem 0.6rem; font-size: 14px; }
+  .paste-row { display: flex; gap: 0.5rem; align-items: flex-start; justify-content: space-between; }
+  .copy-btn { flex-shrink: 0; font-size: 12px; padding: 2px 8px; }
+  .lawyer { font-size: 13px; margin: 0.3rem 0 0; }
+  .draft-tag { display: inline-block; font-size: 11px; border: 1px solid currentColor; border-radius: 4px; padding: 0 5px; margin-left: 4px; opacity: 0.75; }
+  .not-checked { font-size: 14px; margin: 0.6rem 0 0; }
+  button.secondary { background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+  .save-row { font-size: 14px; margin: 0.8rem 0 0; }
+  .save-row small { display: block; color: var(--muted, #888); margin-left: 22px; }
 </style>
 </head>
 <body>
@@ -175,8 +193,24 @@
         <div class="auth-status"><a href="/api-auth/login/?next=/">Log in</a> to analyze documents</div>
       {% endif %}
     </div>
-    <p class="subtitle">Upload a contract or paste clause text — get a risk breakdown in seconds.</p>
+    <p class="subtitle">Checks a freelancer contract for intellectual-property clauses, and tells you what to ask the client to change.</p>
+    <p class="scope"><strong>Checked:</strong> IP assignment clauses only. <strong>Not checked:</strong> payment, liability, termination, confidentiality and everything else.</p>
+    <details class="promise">
+      <summary>What happens to your contract</summary>
+      <ul>
+        <li>Your contract is read in memory and the result is returned. Nothing is saved unless you tick "Save this check".</li>
+        <li>A saved check stores the clause text as plain text for now. Encryption at rest is not built yet.</li>
+        <li>Saved checks expire after 30 days, and you can delete any of them at any time.</li>
+        <li>Whoever runs the server can read stored text. Your contract is not sent to any outside AI service.</li>
+      </ul>
+    </details>
   </header>
+
+  <div class="card" id="sample">
+    <h2 class="sample-heading">Example: a sample report</h2>
+    <p class="sample-note">A made-up contract, run through the same check you will get. The wording is a draft pending lawyer review.</p>
+    <div id="sample-review"></div>
+  </div>
 
   <div class="card">
     <div class="tabs">
@@ -203,6 +237,11 @@
       </button>
     </div>
     <div class="error-msg" id="error-msg"></div>
+    <label class="save-row">
+      <input type="checkbox" id="save-toggle">
+      Save this check to my account
+      <small>Off by default. A saved check expires after 30 days and can be deleted from the results.</small>
+    </label>
   </div>
 
   <div id="results" class="card">
@@ -212,24 +251,27 @@
         <div class="value" id="result-filename" style="font-size: 15px;"></div>
       </div>
       <div class="stat">
-        <div class="label">Total clauses</div>
-        <div class="value" id="result-total"></div>
+        <div class="label">IP clauses checked</div>
+        <div class="value" id="result-ip-count"></div>
       </div>
       <div class="stat risky">
-        <div class="label">Risky clauses</div>
-        <div class="value" id="result-risky-count"></div>
+        <div class="label">Clauses flagged</div>
+        <div class="value" id="result-flag-count"></div>
       </div>
       <div class="stat">
         <div class="label">Processing time</div>
         <div class="value" id="result-time" style="font-size: 15px;"></div>
       </div>
     </div>
-    <div id="clause-list"></div>
+    <div id="result-review"></div>
+    <div id="result-actions" style="margin-top: 1rem;"></div>
   </div>
 
   <footer>
-    LexiLite classifies clauses as safe or risky using a trained model — it is not legal advice.
+    LexiLite only checks IP-assignment clauses. It is not legal advice. The explanations and wording are drafts pending lawyer review.
   </footer>
+
+  {{ sample_report|json_script:"sample-report-data" }}
 </div>
 
 <script>
@@ -293,32 +335,110 @@
     btnLabel.textContent = isLoading ? 'Analyzing…' : 'Analyze';
   }
 
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  // Builds the IP review: what was checked, each flagged clause with its
+  // reasons and paste-ready wording, and what was not checked. Used for both
+  // the sample report and real results, so they always look the same.
+  function buildReview(review) {
+    const wrap = document.createDocumentFragment();
+
+    if (review.unreadable) {
+      wrap.appendChild(el('p', 'no-risky', 'We could not read any text from this file, so nothing was checked. A scanned PDF is one possible cause.'));
+      return wrap;
+    }
+
+    if (review.flags.length === 0) {
+      wrap.appendChild(el('p', 'no-risky', 'No IP-assignment issues matched in the ' + review.ip_clause_count + ' IP clause(s) found. This does not mean the rest of the contract is safe.'));
+    }
+
+    review.flags.forEach(flag => {
+      const block = el('div', 'flag');
+      block.appendChild(el('p', 'flag-clause', flag.clause_text));
+      flag.issues.forEach(issue => {
+        const item = el('div', 'issue');
+        item.appendChild(el('p', 'issue-reason', issue.reason));
+
+        const paste = el('div', 'paste-row');
+        const sentence = el('div', 'paste', issue.paste_sentence);
+        const copy = el('button', 'copy-btn secondary', 'Copy');
+        copy.type = 'button';
+        copy.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(issue.paste_sentence);
+            copy.textContent = 'Copied';
+          } catch (e) {
+            copy.textContent = 'Copy failed';
+          }
+        });
+        paste.appendChild(sentence);
+        paste.appendChild(copy);
+        item.appendChild(paste);
+
+        const lawyer = el('p', 'lawyer', 'Get a lawyer when: ' + issue.lawyer_when);
+        lawyer.appendChild(el('span', 'draft-tag', 'draft, pending lawyer review'));
+        item.appendChild(lawyer);
+        block.appendChild(item);
+      });
+      wrap.appendChild(block);
+    });
+
+    const notChecked = el('details', 'not-checked');
+    notChecked.appendChild(el('summary', '', 'Not checked in this review'));
+    const list = el('ul');
+    review.not_checked.forEach(item => list.appendChild(el('li', '', item)));
+    notChecked.appendChild(list);
+    wrap.appendChild(notChecked);
+
+    return wrap;
+  }
+
+  // The sample report is rendered by the same code from the server's own
+  // output, so the example and real results cannot look different.
+  (function renderSample() {
+    const data = JSON.parse(document.getElementById('sample-report-data').textContent);
+    const target = document.getElementById('sample-review');
+    target.appendChild(buildReview(data));
+  })();
+
+  let lastSavedId = null;
+
   function renderResults(data) {
     document.getElementById('result-filename').textContent = data.filename;
-    document.getElementById('result-total').textContent = data.total_clauses;
-    document.getElementById('result-risky-count').textContent = data.risky_count;
+    document.getElementById('result-ip-count').textContent = data.ip_review.ip_clause_count;
+    document.getElementById('result-flag-count').textContent = data.ip_review.flags.length;
     document.getElementById('result-time').textContent = data.processing_time_ms.toFixed(0) + 'ms';
 
-    const list = document.getElementById('clause-list');
-    list.innerHTML = '';
+    const reviewTarget = document.getElementById('result-review');
+    reviewTarget.innerHTML = '';
+    reviewTarget.appendChild(buildReview(data.ip_review));
 
-    if (data.risky_clauses.length === 0) {
-      const div = document.createElement('div');
-      div.className = 'no-risky';
-      div.textContent = 'No risky clauses found in this document.';
-      list.appendChild(div);
-    } else {
-      data.risky_clauses.forEach(clause => {
-        const div = document.createElement('div');
-        div.className = 'clause';
-        const pct = Math.round(clause.confidence * 100);
-        div.innerHTML =
-          '<div class="clause-text"></div>' +
-          '<div class="clause-meta"><span>Risky</span><span>' + pct + '% confidence</span></div>' +
-          '<div class="confidence-bar"><div class="confidence-bar-fill" style="width:' + pct + '%"></div></div>';
-        div.querySelector('.clause-text').textContent = clause.text;
-        list.appendChild(div);
+    const actions = document.getElementById('result-actions');
+    actions.innerHTML = '';
+    lastSavedId = data.document_id || null;
+    if (lastSavedId) {
+      const del = el('button', 'secondary', 'Delete this saved check now');
+      del.type = 'button';
+      del.addEventListener('click', async () => {
+        try {
+          const response = await fetch('/api/documents/' + lastSavedId + '/', {
+            method: 'DELETE',
+            headers: { 'X-CSRFToken': getCookie('csrftoken') },
+          });
+          if (!response.ok) throw new Error('Delete failed.');
+          actions.textContent = 'Deleted.';
+        } catch (err) {
+          showError(err.message);
+        }
       });
+      actions.appendChild(del);
+    } else {
+      actions.appendChild(el('p', 'sample-note', 'Not saved. This result is not stored anywhere.'));
     }
 
     resultsCard.classList.add('visible');
@@ -359,6 +479,7 @@
         }
         const formData = new FormData();
         formData.append('file', selectedFile);
+        formData.append('save', document.getElementById('save-toggle').checked ? 'true' : 'false');
         setLoading(true);
         response = await fetch('/api/documents/upload/', {
           method: 'POST',
@@ -375,7 +496,11 @@
         response = await fetch('/api/documents/analyze/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
-          body: JSON.stringify({ text: text, filename: 'pasted-text.txt' }),
+          body: JSON.stringify({
+            text: text,
+            filename: 'pasted-text.txt',
+            save: document.getElementById('save-toggle').checked,
+          }),
         });
       }
 
