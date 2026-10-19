@@ -226,20 +226,13 @@ API-only latency (p99):      2009.2ms
 Throughput:                  24.5 req/sec
 ```
 
-**This was measured against `manage.py runserver` (Django's dev server), not Gunicorn.** The "4 worker processes" throughput/latency figures that used to be here were never measured and have been removed rather than left as a guess. Gunicorn doesn't run on Windows at all (no native process forking), so a real multi-worker number needs Linux (WSL or Docker) — not done yet, not blocking, tracked as a follow-up rather than blocking this doc on it.
+**This was measured against `manage.py runserver` (Django's dev server), not Gunicorn.** The "4 worker processes" throughput/latency figures that used to be here were never measured and have been removed rather than left as a guess. Gunicorn doesn't run on Windows at all (no native process forking), so a real multi-worker number needs Linux (e.g. WSL) — not done yet, not blocking, tracked as a follow-up rather than blocking this doc on it.
 
 No resource-usage (memory/CPU) numbers are published here — they were never actually measured, only guessed at previously.
 
 ---
 
 ## Deployment Options
-
-### Docker
-
-```bash
-docker build -t lexilite-api .
-docker run -p 8000:8000 lexilite-api
-```
 
 ### Production Checklist
 
@@ -461,7 +454,7 @@ NOT achieved at these settings: sub-200ms mean latency, or a true
 100+ concurrent production benchmark (the dev server serializes GPU
 work rather than truly parallelizing it — see README.md#performance
 for why). A representative production number needs Gunicorn's
-multi-worker setup, which requires Linux (WSL/Docker) since Gunicorn
+multi-worker setup, which requires Linux (e.g. WSL) since Gunicorn
 doesn't run on Windows.
 ```
 

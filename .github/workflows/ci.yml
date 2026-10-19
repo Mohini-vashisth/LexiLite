@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Python 3.12 to match api/Dockerfile (python:3.12-slim).
+      # Python 3.12: a version Django 5.2 supports (the home PC runs 3.13).
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
