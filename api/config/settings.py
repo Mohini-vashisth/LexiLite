@@ -18,6 +18,12 @@ TRAIN_MODEL_DIR = os.getenv('TRAIN_MODEL_DIR', str(BASE_DIR.parent / 'train_mode
 MAX_UPLOAD_SIZE_BYTES = int(os.getenv('MAX_UPLOAD_SIZE_BYTES', 10 * 1024 * 1024))
 
 _DEV_SECRET_KEY = 'dev-key-change-in-production'
+# LEX-9 data retention: analyses (which contain the full text of the analyzed
+# contract) are deleted after this many days by `manage.py purge_expired_analyses`.
+# 0 disables automatic expiry. Users can also delete their own data at any
+# time via the API. See DATA_POLICY.md.
+RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', 30))
+
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', _DEV_SECRET_KEY)
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')

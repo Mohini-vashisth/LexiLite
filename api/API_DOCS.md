@@ -7,6 +7,7 @@ Django REST API for legal document analysis with:
 - ✅ **Confidence gating** — low-confidence calls routed to review, not guessed
 - ✅ **PDF/DOCX upload** alongside raw-text analysis
 - ✅ **Authentication** — every endpoint except `/health/` and `/metrics/` requires a real user (LEX-6); each user only ever sees their own analysis history
+- ✅ **Data retention** — analyses expire after `RETENTION_DAYS` (default 30); users can delete their own data. See [DATA_POLICY.md](DATA_POLICY.md) for what is stored and what is not encrypted
 - ✅ **Health checks** and metrics monitoring
 - ⚠️ Latency/concurrency: see [Performance Characteristics](#performance-characteristics) for real measured numbers and their caveats — the "sub-200ms, 4 workers" figures once claimed here were never actually measured
 
@@ -166,7 +167,17 @@ Retrieve recent document analyses.
 
 ---
 
-### 4. Health Check
+### 4. Delete Your Data
+
+**DELETE** `/api/documents/<id>/` — delete one of your analyses (`204`; someone else's id is `404`).
+
+**DELETE** `/api/documents/delete-all/` — delete every analysis you own. Response: `{"deleted": 3}`.
+
+Automatic expiry is a scheduled management command, see [DATA_POLICY.md](DATA_POLICY.md#how-long-it-is-kept).
+
+---
+
+### 5. Health Check
 
 **GET** `/api/health/`
 
@@ -183,7 +194,7 @@ Check API and model health.
 
 ---
 
-### 5. Performance Metrics
+### 6. Performance Metrics
 
 **GET** `/api/metrics/`
 

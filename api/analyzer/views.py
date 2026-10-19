@@ -103,6 +103,7 @@ def _run_analysis(text, filename, owner):
 class DocumentAnalysisViewSet(
     mixins.RetrieveModelMixin,
     mixins.ListModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     """API endpoint for document analysis.
@@ -113,10 +114,10 @@ class DocumentAnalysisViewSet(
     `POST /api/documents/` via the generic create action would bypass all
     of that: `owner` isn't in the serializer, so it'd fail with a raw
     IntegrityError (500) instead of anything sensible. Same reasoning
-    against update/destroy — there's no legitimate reason to hand-edit or
-    delete an analysis record through this API today. Only what's actually
-    supported (list/retrieve of your own records, plus the three custom
-    actions below) is routable.
+    against update — there's no legitimate reason to hand-edit a result.
+    Delete IS supported (LEX-9 data retention): users can delete their own
+    analyses, one at a time or all at once. get_queryset() scopes everything
+    to request.user, so someone else's record is a 404, never deletable.
     """
     serializer_class = AnalysisResultSerializer
 
@@ -167,6 +168,14 @@ class DocumentAnalysisViewSet(
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return _run_analysis(text, uploaded_file.name, owner=request.user)
+
+    @action(detail=False, methods=['delete'], url_path='delete-all')
+    def delete_all(self, request):
+        """Delete every analysis belonging to the caller (LEX-9: a user can
+        remove all of their stored data in one call)."""
+        deleted, _ = self.get_queryset().delete()
+        logger.info(f"User {request.user.pk} deleted all their analyses ({deleted} rows)")
+        return Response({'deleted': deleted})
 
     @action(detail=False, methods=['get'])
     def recent(self, request):

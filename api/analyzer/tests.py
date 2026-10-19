@@ -231,7 +231,7 @@ class AuthenticationRequiredTests(APITestCase):
         self.assertNotEqual(self.client.get(reverse('health')).status_code, status.HTTP_403_FORBIDDEN)
         self.assertNotEqual(self.client.get(reverse('metrics')).status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_raw_create_update_delete_are_not_routed(self):
+    def test_raw_create_and_update_are_not_routed(self):
         # DocumentAnalysisViewSet is deliberately not a full ModelViewSet —
         # records are only ever created via analyze/upload (which set
         # owner server-side). A raw POST here would bypass that and hit
@@ -250,7 +250,9 @@ class AuthenticationRequiredTests(APITestCase):
         )
         detail_url = reverse('document-detail', args=[record.id])
         self.assertEqual(self.client.put(detail_url, {}, format='json').status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
-        self.assertEqual(self.client.delete(detail_url).status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(self.client.patch(detail_url, {}, format='json').status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        # DELETE of your own record is intentionally supported now (LEX-9
+        # data retention) — covered in DataDeletionTests.
 
     def test_real_token_header_authenticates_successfully(self):
         # Goes through the actual TokenAuthentication class via a real
@@ -644,3 +646,86 @@ class ProductionSettingsTests(TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('DJANGO_SECRET_KEY', result.stderr)
+
+
+def _make_result(owner, doc_id, age_days=0):
+    from datetime import timedelta
+    from django.utils import timezone
+    obj = AnalysisResult.objects.create(
+        owner=owner, document_id=doc_id, filename=f'{doc_id}.pdf', clauses=['secret clause text'],
+        analysis={'risky_count': 0}, processing_time_ms=1.0, model_used='sbert',
+    )
+    # created_at is auto_now_add, so backdate with an update() instead.
+    AnalysisResult.objects.filter(pk=obj.pk).update(created_at=timezone.now() - timedelta(days=age_days))
+    return obj
+
+
+class DataDeletionTests(APITestCase):
+    """LEX-9: users can delete their own stored data, never anyone else's."""
+
+    def setUp(self):
+        self.alice = User.objects.create_user(username='alice', password='pw')
+        self.mallory = User.objects.create_user(username='mallory', password='pw')
+
+    def test_user_can_delete_their_own_analysis(self):
+        obj = _make_result(self.alice, 'a1')
+        self.client.force_authenticate(user=self.alice)
+        response = self.client.delete(reverse('document-detail', args=[obj.pk]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(AnalysisResult.objects.filter(pk=obj.pk).exists())
+
+    def test_cannot_delete_another_users_analysis(self):
+        obj = _make_result(self.alice, 'a1')
+        self.client.force_authenticate(user=self.mallory)
+        response = self.client.delete(reverse('document-detail', args=[obj.pk]))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(AnalysisResult.objects.filter(pk=obj.pk).exists())
+
+    def test_delete_all_only_removes_the_callers_data(self):
+        _make_result(self.alice, 'a1'); _make_result(self.alice, 'a2'); _make_result(self.mallory, 'm1')
+        self.client.force_authenticate(user=self.alice)
+        response = self.client.delete(reverse('document-delete-all'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {'deleted': 2})
+        self.assertEqual(AnalysisResult.objects.filter(owner=self.mallory).count(), 1)
+        self.assertEqual(AnalysisResult.objects.filter(owner=self.alice).count(), 0)
+
+    def test_deletion_requires_authentication(self):
+        obj = _make_result(self.alice, 'a1')
+        self.assertEqual(self.client.delete(reverse('document-detail', args=[obj.pk])).status_code, 403)
+        self.assertEqual(self.client.delete(reverse('document-delete-all')).status_code, 403)
+        self.assertTrue(AnalysisResult.objects.filter(pk=obj.pk).exists())
+
+
+class PurgeExpiredAnalysesTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='alice', password='pw')
+        _make_result(self.user, 'old', age_days=40)
+        _make_result(self.user, 'fresh', age_days=5)
+
+    def _run(self, *args):
+        from django.core.management import call_command
+        out = io.StringIO()
+        call_command('purge_expired_analyses', *args, stdout=out)
+        return out.getvalue()
+
+    @override_settings(RETENTION_DAYS=30)
+    def test_deletes_only_rows_older_than_the_retention_period(self):
+        self._run()
+        self.assertEqual(list(AnalysisResult.objects.values_list('document_id', flat=True)), ['fresh'])
+
+    @override_settings(RETENTION_DAYS=30)
+    def test_dry_run_deletes_nothing(self):
+        output = self._run('--dry-run')
+        self.assertIn('1 analyses', output)
+        self.assertEqual(AnalysisResult.objects.count(), 2)
+
+    @override_settings(RETENTION_DAYS=0)
+    def test_zero_days_disables_retention(self):
+        self._run()
+        self.assertEqual(AnalysisResult.objects.count(), 2)
+
+    @override_settings(RETENTION_DAYS=30)
+    def test_days_flag_overrides_the_setting(self):
+        self._run('--days', '3')
+        self.assertEqual(AnalysisResult.objects.count(), 0)
