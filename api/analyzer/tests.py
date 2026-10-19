@@ -729,3 +729,83 @@ class PurgeExpiredAnalysesTests(TestCase):
     def test_days_flag_overrides_the_setting(self):
         self._run('--days', '3')
         self.assertEqual(AnalysisResult.objects.count(), 0)
+
+
+class ConfidenceScorerTests(TestCase):
+    """LEX-13: the confidence gate, and why the margin check is opt-in."""
+
+    LABELS = np.array(['risky', 'safe'])
+
+    def _score(self, probs, **kwargs):
+        from .confidence import ConfidenceScorer
+        return ConfidenceScorer(**kwargs).score(np.array(probs), self.LABELS)
+
+    def test_accepts_above_threshold_and_rejects_below(self):
+        high, low = self._score([[0.10, 0.90], [0.40, 0.60]], min_confidence=0.65)
+        self.assertTrue(high['accepted'])
+        self.assertEqual(high['label'], 'safe')
+        self.assertFalse(low['accepted'])
+        self.assertEqual(low['label'], 'uncertain')
+        self.assertEqual(low['raw_label'], 'safe')  # the guess is kept, just not trusted
+
+    def test_margin_is_reported_but_not_enforced_by_default(self):
+        (result,) = self._score([[0.30, 0.70]])
+        self.assertAlmostEqual(result['margin'], 0.40, places=4)
+        self.assertIsNone(__import__('analyzer.confidence', fromlist=['x']).ConfidenceScorer().min_margin)
+
+    def test_for_two_classes_a_margin_threshold_is_just_a_confidence_threshold(self):
+        # The LEX-13 finding as an executable fact: margin = 2p - 1, so
+        # (confidence >= 0.65 AND margin >= 0.40) accepts exactly the same
+        # clauses as (confidence >= 0.70) alone, for every possible p.
+        # (Points within float-rounding distance of the 0.70 boundary are
+        # skipped: there 2p - 1 can land at 0.3999999... and flip by 1 ulp.)
+        probs = [[1 - p, p] for p in np.linspace(0.5, 1.0, 501) if abs(p - 0.70) > 1e-6]
+        with_margin = [r['accepted'] for r in self._score(probs, min_confidence=0.65, min_margin=0.40)]
+        confidence_only = [r['accepted'] for r in self._score(probs, min_confidence=0.70)]
+        self.assertEqual(with_margin, confidence_only)
+
+    def test_old_default_margin_never_rejected_anything_the_confidence_gate_passed(self):
+        probs = [[1 - p, p] for p in np.linspace(0.5, 1.0, 501)]
+        old = [r['accepted'] for r in self._score(probs, min_confidence=0.65, min_margin=0.15)]
+        new = [r['accepted'] for r in self._score(probs, min_confidence=0.65)]
+        self.assertEqual(old, new)
+
+    def test_margin_does_matter_with_three_classes(self):
+        # Top class 0.45 vs runner-up 0.44: confidence alone (>= 0.40) passes,
+        # but the near-tie is exactly what a margin gate should catch.
+        probs = [[0.45, 0.44, 0.11]]
+        from .confidence import ConfidenceScorer
+        labels = np.array(['a', 'b', 'c'])
+        self.assertTrue(ConfidenceScorer(min_confidence=0.40).score(np.array(probs), labels)[0]['accepted'])
+        self.assertFalse(ConfidenceScorer(min_confidence=0.40, min_margin=0.15).score(np.array(probs), labels)[0]['accepted'])
+
+
+class FallbackRouterTests(TestCase):
+    def _primary(self, accepted, label='risky', confidence=0.9):
+        return {'accepted': accepted, 'label': label, 'confidence': confidence}
+
+    def _router(self, secondary=None):
+        from .confidence import ConfidenceScorer, FallbackRouter
+        return FallbackRouter(ConfidenceScorer(min_confidence=0.65), secondary_predict_fn=secondary)
+
+    def test_accepted_primary_result_is_used_as_is(self):
+        decision = self._router().resolve('clause', self._primary(True))
+        self.assertEqual((decision['label'], decision['source']), ('risky', 'primary'))
+
+    def test_rejected_without_secondary_goes_to_human_review(self):
+        decision = self._router().resolve('clause', self._primary(False, 'uncertain', 0.55))
+        self.assertEqual((decision['label'], decision['source']), ('needs_review', 'human_review'))
+
+    def test_confident_secondary_model_overrides(self):
+        decision = self._router(lambda text: ('safe', 0.9)).resolve('clause', self._primary(False, 'uncertain', 0.55))
+        self.assertEqual((decision['label'], decision['source']), ('safe', 'secondary'))
+
+    def test_unconfident_secondary_still_goes_to_human_review(self):
+        decision = self._router(lambda text: ('safe', 0.5)).resolve('clause', self._primary(False, 'uncertain', 0.55))
+        self.assertEqual(decision['source'], 'human_review')
+
+    def test_secondary_failure_never_crashes_the_request(self):
+        def boom(text):
+            raise RuntimeError('secondary model down')
+        decision = self._router(boom).resolve('clause', self._primary(False, 'uncertain', 0.55))
+        self.assertEqual(decision['source'], 'human_review')
