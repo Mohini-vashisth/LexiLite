@@ -10,6 +10,7 @@ Production-ready Django REST API for real-time legal document analysis.
 ✅ **Confidence gating** - Low-confidence calls routed to review instead of guessed (see [Confidence gating](#confidence-gating) below)
 ✅ **Performance monitoring** - Built-in metrics & health checks
 ✅ **PDF/DOCX upload** - Not just raw text
+✅ **Data retention** - analyses auto-expire after 30 days and users can delete their own data (see [DATA_POLICY.md](DATA_POLICY.md))
 ✅ **Containerized** - Docker build verified end-to-end (see [Performance](#performance) for what's measured vs. what's still aspirational)
 
 ## Quick Start
@@ -44,6 +45,8 @@ docker run -p 8000:8000 lexilite-api
 |--------|----------|-------------|
 | POST | `/api/documents/analyze/` | Analyze document for risky clauses |
 | GET | `/api/documents/recent/` | Get recent analyses |
+| DELETE | `/api/documents/<id>/` | Delete one of your analyses |
+| DELETE | `/api/documents/delete-all/` | Delete all of your analyses |
 | GET | `/api/health/` | Health check |
 | GET | `/api/metrics/` | Performance metrics |
 
