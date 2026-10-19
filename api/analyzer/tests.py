@@ -992,3 +992,157 @@ class IpReviewInResponseTests(APITestCase):
         self.assertEqual(review['ip_clause_count'], 1)
         self.assertEqual(review['flags'][0]['clause_id'], 0)
         self.assertEqual(review['status'], 'draft_pending_lawyer_review')
+
+
+class PaidReportTests(APITestCase):
+    """The paid full report. The model is faked: these tests check the logic
+    (access, fallbacks, privacy), not the quality of any explanation."""
+
+    CLAUSES = [
+        'Freelancer assigns all work product to Client upon creation.',
+        'Freelancer liability shall be unlimited.',
+    ]
+
+    def setUp(self):
+        from django.contrib.auth.models import Group
+        self.url = reverse('document-report')
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.paid_group, _ = Group.objects.get_or_create(name='paid_report')
+        self.client.force_authenticate(user=self.user)
+
+    def _make_paid(self):
+        self.user.groups.add(self.paid_group)
+
+    def _post(self):
+        return self.client.post(self.url, {'text': 'x' * 40}, format='json')
+
+    def _mock_analyzer(self, mock_get_analyzer):
+        analyzer = MagicMock()
+        analyzer.extract_clauses.return_value = self.CLAUSES
+        mock_get_analyzer.return_value = analyzer
+
+    def test_anonymous_users_are_refused(self):
+        self.client.force_authenticate(user=None)
+        self.assertEqual(self._post().status_code, status.HTTP_403_FORBIDDEN)
+
+    @patch('analyzer.views.get_analyzer')
+    def test_users_not_on_the_paid_plan_are_refused(self, mock_get_analyzer):
+        self._mock_analyzer(mock_get_analyzer)
+        with override_settings(LLM_ENDPOINT='http://model.internal/api/generate'):
+            response = self._post()
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @patch('analyzer.views.get_analyzer')
+    def test_report_is_unavailable_when_no_model_is_configured(self, mock_get_analyzer):
+        self._mock_analyzer(mock_get_analyzer)
+        self._make_paid()
+        with override_settings(LLM_ENDPOINT=''):
+            response = self._post()
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    @override_settings(LLM_ENDPOINT='http://model.internal/api/generate', LLM_MODEL='local-model')
+    @patch('analyzer.report.requests.post')
+    @patch('analyzer.views.get_analyzer')
+    def test_model_explanation_is_used_and_labelled(self, mock_get_analyzer, mock_post):
+        self._mock_analyzer(mock_get_analyzer)
+        self._make_paid()
+        mock_post.return_value = MagicMock(
+            json=MagicMock(return_value={'response': 'This gives the client all your work.'}),
+        )
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        response = self._post()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['report_status'], 'ai_explanation_pending_lawyer_review')
+        issue = response.data['flags'][0]['issues'][0]
+        self.assertEqual(issue['explanation'], 'This gives the client all your work.')
+        self.assertEqual(issue['explanation_source'], 'model')
+
+    @override_settings(LLM_ENDPOINT='http://model.internal/api/generate', LLM_MODEL='local-model')
+    @patch('analyzer.report.requests.post')
+    @patch('analyzer.views.get_analyzer')
+    def test_contract_text_only_goes_to_our_own_endpoint(self, mock_get_analyzer, mock_post):
+        self._mock_analyzer(mock_get_analyzer)
+        self._make_paid()
+        mock_post.return_value = MagicMock(json=MagicMock(return_value={'response': 'ok'}))
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        self._post()
+
+        self.assertTrue(mock_post.called)
+        for call in mock_post.call_args_list:
+            self.assertEqual(call.args[0], 'http://model.internal/api/generate')
+
+    @override_settings(LLM_ENDPOINT='http://model.internal/api/generate', LLM_MODEL='local-model')
+    @patch('analyzer.report.requests.post')
+    @patch('analyzer.views.get_analyzer')
+    def test_model_failure_falls_back_to_the_library_wording(self, mock_get_analyzer, mock_post):
+        import requests as requests_lib
+        self._mock_analyzer(mock_get_analyzer)
+        self._make_paid()
+        mock_post.side_effect = requests_lib.ConnectionError('model down')
+
+        response = self._post()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        issue = response.data['flags'][0]['issues'][0]
+        self.assertEqual(issue['explanation'], issue['reason'])
+        self.assertEqual(issue['explanation_source'], 'library')
+
+    @override_settings(LLM_ENDPOINT='http://model.internal/api/generate', LLM_MODEL='local-model')
+    @patch('analyzer.report.requests.post')
+    @patch('analyzer.views.get_analyzer')
+    def test_empty_model_answer_falls_back(self, mock_get_analyzer, mock_post):
+        self._mock_analyzer(mock_get_analyzer)
+        self._make_paid()
+        mock_post.return_value = MagicMock(json=MagicMock(return_value={'response': '   '}))
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        response = self._post()
+
+        self.assertEqual(response.data['flags'][0]['issues'][0]['explanation_source'], 'library')
+
+    @override_settings(LLM_ENDPOINT='http://model.internal/api/generate', LLM_MODEL='local-model')
+    @patch('analyzer.report.requests.post')
+    @patch('analyzer.views.get_analyzer')
+    def test_model_cannot_add_a_flag_the_library_did_not_produce(self, mock_get_analyzer, mock_post):
+        self._mock_analyzer(mock_get_analyzer)
+        self._make_paid()
+        mock_post.return_value = MagicMock(
+            json=MagicMock(return_value={'response': 'Also watch the non-compete clause.'}),
+        )
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        response = self._post()
+
+        flagged_ids = [f['clause_id'] for f in response.data['flags']]
+        self.assertEqual(flagged_ids, [0])  # the liability clause is not in scope, so never flagged
+        self.assertEqual(len(response.data['flags'][0]['issues']), 1)
+
+    @override_settings(LLM_ENDPOINT='http://model.internal/api/generate', LLM_MODEL='local-model')
+    @patch('analyzer.report.requests.post')
+    @patch('analyzer.views.get_analyzer')
+    def test_long_model_answers_are_capped(self, mock_get_analyzer, mock_post):
+        from analyzer.report import MAX_EXPLANATION_CHARS
+        self._mock_analyzer(mock_get_analyzer)
+        self._make_paid()
+        mock_post.return_value = MagicMock(json=MagicMock(return_value={'response': 'x' * 5000}))
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        response = self._post()
+
+        self.assertEqual(len(response.data['flags'][0]['issues'][0]['explanation']), MAX_EXPLANATION_CHARS)
+
+    @override_settings(LLM_ENDPOINT='http://model.internal/api/generate', LLM_MODEL='local-model')
+    @patch('analyzer.report.requests.post')
+    @patch('analyzer.views.get_analyzer')
+    def test_report_stores_nothing(self, mock_get_analyzer, mock_post):
+        self._mock_analyzer(mock_get_analyzer)
+        self._make_paid()
+        mock_post.return_value = MagicMock(json=MagicMock(return_value={'response': 'ok'}))
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        self._post()
+
+        self.assertEqual(AnalysisResult.objects.count(), 0)

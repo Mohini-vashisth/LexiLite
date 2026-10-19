@@ -15,6 +15,7 @@ from .models import AnalysisResult
 from .serializers import AnalysisResultSerializer
 from .inference import LegalAnalyzer
 from .ip_review import review_ip_clauses
+from .report import build_full_report, ReportUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,36 @@ class DocumentAnalysisViewSet(
 
         save = _wants_save(request.data.get('save', False))
         return _run_analysis(text, uploaded_file.name, owner=request.user, save=save)
+
+    @action(detail=False, methods=['post'])
+    def report(self, request):
+        """
+        The paid full report: the IP review, with each flag explained in plain
+        language by the self-hosted model. Paid users only.
+        POST body: {"text": "document text"}. Nothing is stored.
+        """
+        if not request.user.groups.filter(name=settings.PAID_REPORT_GROUP).exists():
+            return Response(
+                {'error': 'The full report is available on the paid plan.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        text = request.data.get('text', '')
+        if not isinstance(text, str) or len(text) < 10:
+            return Response(
+                {'error': 'Document text required (min 10 characters)'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        clauses = get_analyzer().extract_clauses(text)
+        if not clauses:
+            return Response(
+                {'error': 'No clauses extracted from document'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            report = build_full_report(review_ip_clauses(clauses))
+        except ReportUnavailable as e:
+            return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response(report, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['delete'], url_path='delete-all')
     def delete_all(self, request):

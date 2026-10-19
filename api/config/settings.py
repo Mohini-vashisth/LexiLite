@@ -24,6 +24,13 @@ _DEV_SECRET_KEY = 'dev-key-change-in-production'
 # time via the API. See DATA_POLICY.md.
 RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', 30))
 
+# Paid full report (analyzer/report.py). Points at a self-hosted model on our
+# own server, never at a third-party AI service. Unset = report unavailable.
+LLM_ENDPOINT = os.getenv('LLM_ENDPOINT', '')
+LLM_MODEL = os.getenv('LLM_MODEL', '')
+# Users in this Django group may request the full report. Added by hand for now.
+PAID_REPORT_GROUP = 'paid_report'
+
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', _DEV_SECRET_KEY)
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')

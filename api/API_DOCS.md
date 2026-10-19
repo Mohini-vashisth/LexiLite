@@ -133,6 +133,21 @@ The older `risky_clauses` fields are the general classifier output and are not s
 
 ---
 
+### Full report (paid plan)
+
+**POST** `/api/documents/report/` with `{"text": "..."}`
+
+Each IP flag from the review, with a plain-language explanation written by the self-hosted model (`LLM_ENDPOINT`). Only users in the `paid_report` group may call it. Nothing is stored.
+
+- `403` if the user is not on the paid plan.
+- `503` if no model endpoint is configured (the report is then unavailable).
+- If the model fails or returns nothing for a flag, that flag keeps the library's reason, and `explanation_source` says `library` instead of `model`.
+- The model can only explain flags the review already produced. Its output is labelled `ai_explanation_pending_lawyer_review`.
+
+Contract text is sent only to `LLM_ENDPOINT`, never to a third-party AI service.
+
+---
+
 ### 2. Upload Document (PDF/DOCX)
 
 **POST** `/api/documents/upload/`
