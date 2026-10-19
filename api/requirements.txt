@@ -3,7 +3,7 @@ djangorestframework==3.17.2
 django-cors-headers==4.9.0
 gunicorn==22.0.0
 requests==2.34.2
-# Target runtime: Python 3.12 (Docker image, CI) — also verified on 3.13
+# Target runtime: Python 3.12 (CI) — also verified on 3.13
 # (Windows PC, RTX 5060 Ti) and 3.11. Django 5.2 LTS needs Python >= 3.10.
 #
 # The ML packages below are intentionally left unpinned: on these Python

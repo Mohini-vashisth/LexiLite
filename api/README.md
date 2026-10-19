@@ -11,7 +11,6 @@ Production-ready Django REST API for real-time legal document analysis.
 ✅ **Performance monitoring** - Built-in metrics & health checks
 ✅ **PDF/DOCX upload** - Not just raw text
 ✅ **Data retention** - analyses auto-expire after 30 days and users can delete their own data (see [DATA_POLICY.md](DATA_POLICY.md))
-✅ **Containerized** - Docker build verified end-to-end (see [Performance](#performance) for what's measured vs. what's still aspirational)
 
 ## Quick Start
 
@@ -31,12 +30,11 @@ python benchmark.py
 ### Production
 
 ```bash
-# Using Gunicorn (4 workers)
+# Using Gunicorn (4 workers) - Linux/macOS only
 gunicorn --workers=4 --bind=0.0.0.0:8000 config.wsgi:application
 
-# Or using Docker
-docker build -t lexilite-api .
-docker run -p 8000:8000 lexilite-api
+# Deploying to the home PC (Windows) from the Mac:
+#   ./scripts/deploy.sh
 ```
 
 ## API Endpoints
@@ -65,7 +63,7 @@ curl -X POST http://localhost:8000/api/documents/analyze/ \
 
 **Measured 2026-09-22** — real numbers from `benchmark.py --concurrent 50 --total 100`, run against a live server on Windows with an NVIDIA RTX 5060 Ti (GPU-accelerated inference, `torch+cu128`). The `--total 200` originally planned here isn't achievable against a single anonymous client without changes — DRF's default throttle caps anonymous requests at 100/hour, and the throttle counts every attempt (see `settings.py`'s `AnonRateThrottle`).
 
-**Important caveat:** this was measured against Django's development server (`manage.py runserver`), **not** the Gunicorn/4-worker setup described elsewhere in this doc. The dev server is largely single-process, so concurrent requests queue rather than truly running in parallel — the numbers below reflect that, not the production architecture. Gunicorn doesn't run natively on Windows (it depends on Unix process forking), so a true multi-worker benchmark needs Linux (WSL or Docker) and is tracked separately, not blocking here.
+**Important caveat:** this was measured against Django's development server (`manage.py runserver`), **not** the Gunicorn/4-worker setup described elsewhere in this doc. The dev server is largely single-process, so concurrent requests queue rather than truly running in parallel — the numbers below reflect that, not the production architecture. Gunicorn doesn't run natively on Windows (it depends on Unix process forking), so a true multi-worker benchmark needs Linux (e.g. WSL) and is tracked separately, not blocking here.
 
 ```
 Requests:              100/100 succeeded (100%)
@@ -165,7 +163,6 @@ api/
 │   ├── serializers.py       # DRF serializers
 │   ├── inference.py         # Model inference engine
 │   └── apps.py              # App configuration
-├── Dockerfile               # Docker containerization
 ├── requirements.txt         # Python dependencies
 ├── run_server.sh            # Production run script
 ├── benchmark.py             # Performance testing
