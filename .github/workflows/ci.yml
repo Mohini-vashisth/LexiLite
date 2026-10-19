@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+
+      # Python 3.9 to match api/Dockerfile (python:3.9-slim).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+
+      # The tests mock the model, so torch / sentence-transformers (multi-GB)
+      # are not needed here. Everything else comes from requirements.txt.
+      - name: Install dependencies (without the ML stack)
+        run: |
+          grep -v -i -E '^(sentence-transformers|torch|transformers|huggingface_hub)' requirements.txt > ci-requirements.txt
+          pip install -r ci-requirements.txt
+
+      - name: Django system check
+        run: python manage.py check
+
+      - name: Fail if a model change is missing its migration
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Run tests
+        run: python manage.py test analyzer
+
+  dependency-audit:
+    # Reports known CVEs in the pinned packages. Not blocking yet: the
+    # remaining Django findings are only fixed in Django 5.2+, which needs
+    # Python 3.10+ (tracked as its own ticket).
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - run: |
+          grep -E '^[A-Za-z0-9_.-]+==' api/requirements.txt > pinned.txt
+          pip-audit -r pinned.txt --no-deps --disable-pip

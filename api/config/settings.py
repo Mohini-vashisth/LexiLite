@@ -17,9 +17,28 @@ TRAIN_MODEL_DIR = os.getenv('TRAIN_MODEL_DIR', str(BASE_DIR.parent / 'train_mode
 # no async/queued processing path yet (see LEX-8/ops backlog).
 MAX_UPLOAD_SIZE_BYTES = int(os.getenv('MAX_UPLOAD_SIZE_BYTES', 10 * 1024 * 1024))
 
-SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'dev-key-change-in-production')
+_DEV_SECRET_KEY = 'dev-key-change-in-production'
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', _DEV_SECRET_KEY)
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+
+# LEX-9: the dev fallback key is public (it's in git). Anyone who knows the
+# SECRET_KEY can forge session cookies and password-reset tokens, so a
+# non-debug deployment that forgot to set DJANGO_SECRET_KEY must refuse to
+# start rather than silently run with a known key.
+if not DEBUG and SECRET_KEY == _DEV_SECRET_KEY:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY must be set to a private value when DEBUG is off."
+    )
+
+if not DEBUG:
+    # Only meaningful behind HTTPS, so off in local development.
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'True') == 'True'
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_CONTENT_TYPE_NOSNIFF = True
 
 INSTALLED_APPS = [
     'django.contrib.contenttypes',

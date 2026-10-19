@@ -190,7 +190,9 @@ class AnalyzeEndpointTests(APITestCase):
             self.url, {'text': 'a' * 20, 'filename': 'a.txt'}, format='json'
         )
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-        self.assertIn('model exploded', response.data['error'])
+        # LEX-9: the raw exception text must NOT reach the client
+        self.assertNotIn('model exploded', response.data['error'])
+        self.assertIn('Internal error', response.data['error'])
         # A failed analysis must not leave a half-written record behind.
         self.assertEqual(AnalysisResult.objects.count(), 0)
 
@@ -577,3 +579,68 @@ class FrontendPageTests(TestCase):
         response = self.client.get(reverse('index'))
         self.assertIn(reverse('document-upload').encode(), response.content)
         self.assertIn(reverse('document-analyze').encode(), response.content)
+
+
+class SecurityHardeningTests(APITestCase):
+    """LEX-9: regressions for issues found in the security review."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.client.force_authenticate(user=self.user)
+
+    def test_non_string_text_is_a_400_not_a_500(self):
+        response = self.client.post(
+            reverse('document-analyze'), {'text': 12345678901234, 'filename': 'a.txt'}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_recent_rejects_non_integer_limit(self):
+        response = self.client.get(reverse('document-recent'), {'limit': 'abc'})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_recent_clamps_huge_and_negative_limits(self):
+        for i in range(3):
+            AnalysisResult.objects.create(
+                owner=self.user, document_id=f'doc-{i}', filename='f.pdf', clauses=['a'],
+                analysis={'risky_count': 0}, processing_time_ms=1.0, model_used='sbert',
+            )
+        self.assertEqual(self.client.get(reverse('document-recent'), {'limit': 10**9}).status_code, 200)
+        negative = self.client.get(reverse('document-recent'), {'limit': -5})
+        self.assertEqual(negative.status_code, 200)
+        self.assertEqual(negative.data['count'], 1)  # clamped to the minimum of 1
+
+    @patch('analyzer.views.get_analyzer')
+    def test_internal_errors_do_not_leak_exception_text(self, mock_get_analyzer):
+        mock_get_analyzer.return_value.extract_clauses.side_effect = RuntimeError('secret path C:\\internal\\x')
+        response = self.client.post(
+            reverse('document-analyze'), {'text': 'A long enough document text.', 'filename': 'a.txt'}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertNotIn('secret path', str(response.data))
+
+    @patch('analyzer.views.get_analyzer')
+    def test_overlong_filename_is_truncated_not_a_crash(self, mock_get_analyzer):
+        analyzer = mock_get_analyzer.return_value
+        analyzer.extract_clauses.return_value = ['one clause']
+        analyzer.analyze_clauses.return_value = {
+            'total_clauses': 1, 'risky_count': 0, 'risky_clauses': [], 'processing_time_ms': 1.0,
+        }
+        response = self.client.post(
+            reverse('document-analyze'), {'text': 'A long enough document text.', 'filename': 'x' * 5000}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(response.data['filename']), 255)
+
+
+class ProductionSettingsTests(TestCase):
+    def test_refuses_to_start_non_debug_with_the_public_dev_secret_key(self):
+        import os, subprocess, sys
+        env = {**os.environ, 'DEBUG': 'False'}
+        env.pop('DJANGO_SECRET_KEY', None)
+        env['DJANGO_SETTINGS_MODULE'] = 'config.settings'
+        result = subprocess.run(
+            [sys.executable, '-c', 'import django; from django.conf import settings; settings.SECRET_KEY'],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('DJANGO_SECRET_KEY', result.stderr)

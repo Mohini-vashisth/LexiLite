@@ -27,6 +27,9 @@ def get_analyzer():
     return _analyzer
 
 
+MAX_FILENAME_LENGTH = 255  # AnalysisResult.filename column size
+
+
 def _run_analysis(text, filename, owner):
     """
     Shared by both the JSON-text endpoint (analyze) and the file-upload
@@ -37,9 +40,12 @@ def _run_analysis(text, filename, owner):
     Returns a DRF Response ready to hand back to the caller.
     """
     start_time = time.time()
+    # LEX-9: filename is client-supplied; an over-long one would overflow the
+    # column (500 on Postgres), and a non-string would blow up later.
+    filename = str(filename)[:MAX_FILENAME_LENGTH]
 
     try:
-        if not text or len(text) < 10:
+        if not isinstance(text, str) or len(text) < 10:
             return Response(
                 {'error': 'Document text required (min 10 characters)'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -84,10 +90,12 @@ def _run_analysis(text, filename, owner):
             'api_response_time_ms': round(total_time_ms, 2),
         }, status=status.HTTP_201_CREATED)
 
-    except Exception as e:
-        logger.error(f"Analysis error: {e}")
+    except Exception:
+        # LEX-9: log the details server-side, but never echo str(e) to the
+        # client — exception text can include file paths, SQL, or internals.
+        logger.exception("Analysis error")
         return Response(
-            {'error': str(e)},
+            {'error': 'Internal error while analyzing the document'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -164,7 +172,13 @@ class DocumentAnalysisViewSet(
     def recent(self, request):
         """Get recent analysis results — the caller's own only, via
         get_queryset() (already scoped to request.user)."""
-        limit = int(request.query_params.get('limit', 10))
+        # LEX-9: int() on user input crashed with a 500 on junk like
+        # ?limit=abc, and an unbounded limit let one call pull the whole table.
+        try:
+            limit = int(request.query_params.get('limit', 10))
+        except ValueError:
+            return Response({'error': "'limit' must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+        limit = max(1, min(limit, 100))
         results = self.get_queryset()[:limit]
         return Response({
             'count': len(results),
