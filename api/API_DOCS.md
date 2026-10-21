@@ -74,6 +74,8 @@ Analyze a legal document for risky clauses.
 
 Nothing is stored unless you send `"save": true`. Without it, the result is returned and discarded.
 
+**How the document is split:** the text is cut into clause-sized chunks (see `analyzer/segmentation.py`): page headers are dropped, hard-wrapped PDF lines are re-joined, and chunks start at numbered/lettered items and headings (`3)`, `B.`, `Section 5`, `ARTICLE IV`). Anything longer than 800 characters is split at sentence boundaries, so every chunk fits the model's input window. A 10-page contract typically yields around 100 chunks.
+
 **Request:**
 ```json
 {
@@ -108,11 +110,12 @@ The older `risky_clauses` fields are the general classifier output and are not s
   "saved": false,
   "filename": "contract.pdf",
   "total_clauses": 42,
+  "clauses_truncated": false,
   "risky_count": 3,
   "risky_clauses": [
     {
       "clause_id": 5,
-      "text": "This clause limits our liability in unforeseen...",
+      "text": "The full text of the chunk the model scored (up to ~800 chars), not a prefix.",
       "risk": "risky",
       "confidence": 0.92,
       "safe_prob": 0.08,
@@ -123,6 +126,10 @@ The older `risky_clauses` fields are the general classifier output and are not s
   "api_response_time_ms": 152.18
 }
 ```
+
+- `risky_clauses` is **most risky first**, capped at 50. `risky_count` is the full total.
+- `clauses_truncated` is `true` when the document had more than `MAX_CLAUSES_PER_DOCUMENT` (default 500) chunks; only the first that many were analyzed.
+- `total_clauses` is the number of chunks actually analyzed.
 
 **Error Response (400):**
 ```json

@@ -12,11 +12,11 @@ Only if the request sets `save` to true is one `AnalysisResult` row created:
 |---|---|
 | `owner` | The account that ran the analysis |
 | `filename` | The name you sent (truncated to 255 chars) |
-| `clauses` | **The full text of every clause extracted from the document** (first 100 clauses) |
+| `clauses` | **The full text of every clause-sized chunk extracted from the document** (up to `MAX_CLAUSES_PER_DOCUMENT`, default 500) |
 | `analysis` | Per-clause risk results, **including the clause text again** for the risky ones |
 | `processing_time_ms`, `model_used`, timestamps | Operational metadata |
 
-**Not stored:** the uploaded PDF/DOCX file itself. It is parsed in memory and discarded; nothing is written to disk. Clauses beyond the first 100 are not analyzed or stored.
+**Not stored:** the uploaded PDF/DOCX file itself. It is parsed in memory and discarded; nothing is written to disk. Chunks beyond `MAX_CLAUSES_PER_DOCUMENT` (default 500) are not analyzed or stored, and the response says so (`clauses_truncated`).
 
 **Why:** so you can look up past results (`/api/documents/recent/`, retrieve by id).
 
