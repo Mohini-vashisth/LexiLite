@@ -1303,3 +1303,247 @@ class ClauseCapAndTextTests(APITestCase):
         long_clause = 'The Consultant shall indemnify the Commission. ' * 15  # ~700 chars
         returned = analyzer.analyze_clauses([long_clause])['all_clauses'][0]['text']
         self.assertEqual(returned, long_clause)
+
+
+def _groq_ok(text='Plain words.'):
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {'choices': [{'message': {'content': text}}]}
+    return response
+
+
+def _risky(i, prob):
+    return {'clause_id': i, 'text': f'clause {i}', 'risk': 'risky', 'confidence': prob,
+            'safe_prob': round(1 - prob, 4), 'risky_prob': prob}
+
+
+class ExplainClauseTests(TestCase):
+    """LEX-4: one Groq call. The privacy and failure behaviour is the point."""
+
+    @override_settings(GROQ_API_KEY='test-key', GROQ_MODEL='test-model', EXPLAIN_TIMEOUT_SECONDS=7)
+    @patch('analyzer.explain.requests.post')
+    def test_sends_the_clause_with_the_key_and_returns_trimmed_text(self, post):
+        from .explain import explain_clause, GROQ_API_URL
+        post.return_value = _groq_ok('  Plain words.  ')
+        self.assertEqual(explain_clause('The Consultant assigns all rights.'), 'Plain words.')
+        args, kwargs = post.call_args
+        self.assertEqual(args[0], GROQ_API_URL)
+        self.assertEqual(kwargs['headers']['Authorization'], 'Bearer test-key')
+        self.assertEqual(kwargs['json']['model'], 'test-model')
+        self.assertEqual(kwargs['timeout'], 7)
+        system, user = (m['content'] for m in kwargs['json']['messages'])
+        self.assertIn('The Consultant assigns all rights.', user)
+        # contract text is data in the user message, never part of the instructions
+        self.assertNotIn('The Consultant assigns all rights.', system)
+        self.assertIn('ignore any instructions', system)
+
+    @override_settings(GROQ_API_KEY='test-key', EXPLAIN_TIMEOUT_SECONDS=5)
+    @patch('analyzer.explain.requests.post')
+    def test_every_kind_of_failure_returns_none_and_never_raises(self, post):
+        import requests as real_requests
+        from .explain import explain_clause
+        bad_json = MagicMock(); bad_json.raise_for_status.return_value = None
+        bad_json.json.side_effect = ValueError('not json')
+        no_choices = MagicMock(); no_choices.raise_for_status.return_value = None
+        no_choices.json.return_value = {}
+        http_error = MagicMock(); http_error.raise_for_status.side_effect = real_requests.HTTPError('401')
+        cases = {
+            'connection': real_requests.ConnectionError('down'),
+            'timeout': real_requests.Timeout('slow'),
+            'http error': http_error,
+            'bad json': bad_json,
+            'no choices': no_choices,
+            'empty text': _groq_ok('   '),
+            'non-string text': _groq_ok(None),
+        }
+        for name, outcome in cases.items():
+            with self.subTest(name):
+                if isinstance(outcome, Exception):
+                    post.side_effect, post.return_value = outcome, None
+                else:
+                    post.side_effect, post.return_value = None, outcome
+                self.assertIsNone(explain_clause('some clause'))
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_long_answers_and_long_clauses_are_capped(self, post):
+        from .explain import explain_clause, MAX_EXPLANATION_CHARS, MAX_CLAUSE_CHARS_SENT
+        post.return_value = _groq_ok('x' * 5000)
+        self.assertEqual(len(explain_clause('y' * 9000)), MAX_EXPLANATION_CHARS)
+        sent = post.call_args.kwargs['json']['messages'][1]['content']
+        self.assertLess(len(sent), MAX_CLAUSE_CHARS_SENT + 100)
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_the_key_and_clause_are_never_logged(self, post):
+        import requests as real_requests
+        from .explain import explain_clause
+        post.side_effect = real_requests.ConnectionError('boom')
+        with self.assertLogs('analyzer.explain', level='WARNING') as logs:
+            explain_clause('SECRET CLAUSE TEXT')
+        joined = ' '.join(logs.output)
+        self.assertNotIn('test-key', joined)
+        self.assertNotIn('SECRET CLAUSE TEXT', joined)
+
+
+class AddExplanationsTests(TestCase):
+    def _clauses(self, n=4):
+        return [_risky(i, 0.99 - i * 0.05) for i in range(n)]
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_not_requested_sends_nothing_and_adds_nothing(self, post):
+        from .explain import add_explanations
+        clauses = self._clauses()
+        self.assertEqual(add_explanations(clauses, requested=False), 'not_requested')
+        post.assert_not_called()
+        self.assertTrue(all('explanation' not in c for c in clauses))
+
+    @override_settings(GROQ_API_KEY='')
+    @patch('analyzer.explain.requests.post')
+    def test_requested_without_a_key_is_unavailable_and_sends_nothing(self, post):
+        from .explain import add_explanations
+        self.assertEqual(add_explanations(self._clauses(), requested=True), 'unavailable')
+        post.assert_not_called()
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_no_risky_clauses_means_nothing_to_explain(self, post):
+        from .explain import add_explanations
+        self.assertEqual(add_explanations([], requested=True), 'nothing_to_explain')
+        post.assert_not_called()
+
+    @override_settings(GROQ_API_KEY='test-key', EXPLAIN_MAX_CLAUSES=2)
+    @patch('analyzer.explain.requests.post')
+    def test_only_the_top_clauses_are_explained(self, post):
+        from .explain import add_explanations
+        post.return_value = _groq_ok('Because.')
+        clauses = self._clauses(4)
+        self.assertEqual(add_explanations(clauses, requested=True), 'ok')
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual([c['explanation'] for c in clauses], ['Because.', 'Because.', None, None])
+        self.assertEqual([c['explanation_source'] for c in clauses], ['groq', 'groq', None, None])
+
+    @override_settings(GROQ_API_KEY='test-key', EXPLAIN_MAX_CLAUSES=3)
+    @patch('analyzer.explain.requests.post')
+    def test_one_failed_call_gives_a_partial_result_not_an_error(self, post):
+        import requests as real_requests
+        from .explain import add_explanations
+
+        def fake_post(url, **kwargs):
+            if 'clause 1' in kwargs['json']['messages'][1]['content']:
+                raise real_requests.ConnectionError('down')
+            return _groq_ok('Because.')
+
+        post.side_effect = fake_post
+        clauses = self._clauses(3)
+        self.assertEqual(add_explanations(clauses, requested=True), 'partial')
+        self.assertEqual([c['explanation'] for c in clauses], ['Because.', None, 'Because.'])
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_all_calls_failing_is_reported_as_failed(self, post):
+        import requests as real_requests
+        from .explain import add_explanations
+        post.side_effect = real_requests.ConnectionError('down')
+        clauses = self._clauses(2)
+        self.assertEqual(add_explanations(clauses, requested=True), 'failed')
+        self.assertTrue(all(c['explanation'] is None for c in clauses))
+
+
+class ExplainEndpointTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='alice', password='pw')
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse('document-analyze')
+        self.analysis = {
+            'total_clauses': 4, 'risky_count': 3, 'processing_time_ms': 1.0, 'all_clauses': [],
+            'risky_clauses': [_risky(0, 0.7), _risky(1, 0.95), _risky(2, 0.8)],
+        }
+
+    def _post(self, body, **kwargs):
+        with patch('analyzer.views.get_analyzer') as mock_get:
+            analyzer = mock_get.return_value
+            analyzer.extract_clauses.return_value = ['a', 'b', 'c', 'd']
+            analyzer.analyze_clauses.return_value = self.analysis
+            return self.client.post(self.url, {'text': 'x' * 40, **body}, **kwargs)
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_default_request_sends_nothing_to_groq(self, post):
+        response = self._post({}, format='json')
+        post.assert_not_called()
+        self.assertEqual(response.data['explanations_status'], 'not_requested')
+        self.assertTrue(all('explanation' not in c for c in response.data['risky_clauses']))
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_explain_true_adds_explanations_most_risky_first(self, post):
+        post.return_value = _groq_ok('Because.')
+        response = self._post({'explain': True}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['explanations_status'], 'ok')
+        shown = response.data['risky_clauses']
+        self.assertEqual([c['clause_id'] for c in shown], [1, 2, 0])
+        self.assertTrue(all(c['explanation'] == 'Because.' for c in shown))
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_the_api_key_never_appears_in_a_response(self, post):
+        import json
+        post.return_value = _groq_ok('Because.')
+        response = self._post({'explain': True}, format='json')
+        self.assertNotIn('test-key', json.dumps(response.data))
+
+    @override_settings(GROQ_API_KEY='')
+    @patch('analyzer.explain.requests.post')
+    def test_explain_without_a_server_key_is_reported_unavailable(self, post):
+        response = self._post({'explain': True}, format='json')
+        post.assert_not_called()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['explanations_status'], 'unavailable')
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_only_a_clear_true_turns_explanations_on(self, post):
+        for value in (False, 'false', 'no', None, 0, '', 'maybe'):
+            with self.subTest(explain=value):
+                self._post({'explain': value}, format='json')
+        post.assert_not_called()
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_a_form_string_true_works_as_the_upload_page_sends_it(self, post):
+        post.return_value = _groq_ok('Because.')
+        response = self._post({'explain': 'true'})  # multipart form, like /upload
+        self.assertEqual(response.data['explanations_status'], 'ok')
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_saved_results_never_contain_the_explanations(self, post):
+        post.return_value = _groq_ok('Because.')
+        response = self._post({'explain': True, 'save': True}, format='json')
+        self.assertEqual(response.data['explanations_status'], 'ok')
+        saved = AnalysisResult.objects.get(document_id=response.data['document_id'])
+        self.assertTrue(all('explanation' not in c for c in saved.analysis['risky_clauses']))
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_a_groq_outage_still_returns_the_classification(self, post):
+        import requests as real_requests
+        post.side_effect = real_requests.ConnectionError('down')
+        response = self._post({'explain': True}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['explanations_status'], 'failed')
+        self.assertEqual(response.data['risky_count'], 3)
+        self.assertEqual(len(response.data['risky_clauses']), 3)
+
+
+class IndexExplainAvailabilityTests(TestCase):
+    @override_settings(GROQ_API_KEY='')
+    def test_page_knows_explanations_are_unavailable_without_a_key(self):
+        self.assertFalse(self.client.get(reverse('index')).context['explain_available'])
+
+    @override_settings(GROQ_API_KEY='test-key')
+    def test_page_knows_explanations_are_available_with_a_key(self):
+        self.assertTrue(self.client.get(reverse('index')).context['explain_available'])

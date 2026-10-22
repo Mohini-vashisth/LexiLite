@@ -14,6 +14,7 @@ from .document_parsers import extract_text_from_upload, UnsupportedFileType, Doc
 from .models import AnalysisResult
 from .serializers import AnalysisResultSerializer
 from .inference import LegalAnalyzer
+from .explain import add_explanations, explain_available
 from .ip_review import review_ip_clauses
 from .report import build_full_report, ReportUnavailable
 
@@ -36,17 +37,25 @@ MAX_FILENAME_LENGTH = 255  # AnalysisResult.filename column size
 MAX_RISKY_RETURNED = 50  # most-risky-first; risky_count in the response is the full total
 
 
-def _wants_save(value):
-    """`save` arrives as a JSON boolean from /analyze and as a form string
-    ('true'/'false') from /upload. Anything that isn't clearly true means
-    don't save: storage is opt-in, so a missing or odd value must not
-    create a record."""
+def _is_true(value):
+    """Opt-in flags (`save`, `explain`) arrive as a JSON boolean from /analyze
+    and as a form string ('true'/'false') from /upload. Anything that isn't
+    clearly true means no: both flags are opt-in, so a missing or odd value
+    must never store a record or send text to a third party."""
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in ('true', '1', 'yes')
 
 
-def _run_analysis(text, filename, owner, save=False):
+def _wants_save(value):
+    return _is_true(value)
+
+
+def _wants_explain(value):
+    return _is_true(value)
+
+
+def _run_analysis(text, filename, owner, save=False, explain=False):
     """
     Shared by both the JSON-text endpoint (analyze) and the file-upload
     endpoint (upload) — everything after "we have plain text" is identical
@@ -110,6 +119,15 @@ def _run_analysis(text, filename, owner, save=False):
             f"{analysis['risky_count']} risky, saved={save}, {total_time_ms:.1f}ms"
         )
 
+        # Copies, so the explanations added below never leak into what was
+        # just saved: stored results hold the classifier output only.
+        risky_shown = [
+            dict(r) for r in sorted(
+                analysis['risky_clauses'], key=lambda r: r['risky_prob'], reverse=True
+            )[:MAX_RISKY_RETURNED]
+        ]
+        explanations_status = add_explanations(risky_shown, explain)
+
         response_data = {
             'saved': save,
             'filename': filename,
@@ -119,9 +137,8 @@ def _run_analysis(text, filename, owner, save=False):
             'risky_count': analysis['risky_count'],
             # Most risky first (LEX-17: this used to be the first 10 in
             # document order, which only looked fine with page-sized chunks).
-            'risky_clauses': sorted(
-                analysis['risky_clauses'], key=lambda r: r['risky_prob'], reverse=True
-            )[:MAX_RISKY_RETURNED],
+            'risky_clauses': risky_shown,
+            'explanations_status': explanations_status,
             'processing_time_ms': round(analysis['processing_time_ms'], 2),
             'api_response_time_ms': round(total_time_ms, 2),
         }
@@ -185,7 +202,8 @@ class DocumentAnalysisViewSet(
         text = request.data.get('text', '')
         filename = request.data.get('filename', 'unnamed_document')
         save = _wants_save(request.data.get('save', False))
-        return _run_analysis(text, filename, owner=request.user, save=save)
+        explain = _wants_explain(request.data.get('explain', False))
+        return _run_analysis(text, filename, owner=request.user, save=save, explain=explain)
 
     @action(detail=False, methods=['post'])
     def upload(self, request):
@@ -218,7 +236,8 @@ class DocumentAnalysisViewSet(
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         save = _wants_save(request.data.get('save', False))
-        return _run_analysis(text, uploaded_file.name, owner=request.user, save=save)
+        explain = _wants_explain(request.data.get('explain', False))
+        return _run_analysis(text, uploaded_file.name, owner=request.user, save=save, explain=explain)
 
     @action(detail=False, methods=['post'])
     def report(self, request):
@@ -344,6 +363,7 @@ class IndexView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['sample_report'] = sample_report()
+        context['explain_available'] = explain_available()
         return context
 
 

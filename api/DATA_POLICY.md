@@ -24,6 +24,18 @@ Only if the request sets `save` to true is one `AnalysisResult` row created:
 
 **Access:** each user can only see, retrieve or delete their own rows. There is no admin-facing API for reading other users' analyses (a Django superuser with database access can, as with any application).
 
+## The one case where text leaves the server: explanations
+
+By default your contract never leaves this server. If a request sets `explain` to true **and** the server has a `GROQ_API_KEY`, the **risky clauses that were flagged** (the top 10 by default, `EXPLAIN_MAX_CLAUSES`; never the whole contract) are sent to **Groq**, a third-party AI provider, to write a plain-English explanation of each. Groq's own terms and data handling apply to that text, and they are not controlled by this project.
+
+- Nothing is sent unless the request asks for it. A missing or unclear `explain` value means no.
+- The endpoint is fixed in the code, so it cannot be redirected by configuration.
+- The API key lives only in the server's environment. It is never logged and never returned in a response.
+- Explanations are machine-written and are not stored: a saved analysis holds the classifier output only.
+- If Groq is unreachable or returns nothing, the clause is returned without an explanation and the response says so.
+
+The separate paid report (`/api/documents/report/`) does not use Groq; it talks only to a self-hosted model at `LLM_ENDPOINT` when one is configured.
+
 ## How long it is kept
 
 Analyses are automatically deleted **30 days** after creation.

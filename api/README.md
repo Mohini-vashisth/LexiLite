@@ -10,6 +10,7 @@ Production-ready Django REST API for real-time legal document analysis.
 ⚠️ **Confidence gating** - implemented and measured (`analyzer/confidence.py`), but **not yet applied by the live endpoint**: every response reports each clause's confidence, but nothing is routed to review yet (see [Confidence gating](#confidence-gating) below)
 ✅ **Performance monitoring** - Built-in metrics & health checks
 ✅ **PDF/DOCX upload** - Not just raw text
+✅ **Plain-English explanations** - opt-in per request (`explain: true`), written by Groq for the top risky clauses only; off unless a key is configured, and the privacy trade-off is spelled out in [DATA_POLICY.md](DATA_POLICY.md)
 ✅ **Data retention** - analyses auto-expire after 30 days and users can delete their own data (see [DATA_POLICY.md](DATA_POLICY.md))
 
 ## Quick Start
@@ -119,6 +120,9 @@ python benchmark.py --concurrent 50 --total 200
 DEBUG=False                          # Disable debug mode
 DJANGO_SECRET_KEY=your-secret-key   # Production secret
 ALLOWED_HOSTS=api.lexilite.com      # Allowed domains
+GROQ_API_KEY=your-groq-key          # Optional: enables opt-in plain-English explanations (see DATA_POLICY.md)
+GROQ_MODEL=llama-3.3-70b-versatile  # Optional: Groq retires models, check console.groq.com/docs/models
+EXPLAIN_MAX_CLAUSES=10              # How many top risky clauses get an explanation per request
 ```
 
 ### Gunicorn Tuning

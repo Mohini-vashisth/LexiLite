@@ -23,6 +23,16 @@ MAX_UPLOAD_SIZE_BYTES = int(os.getenv('MAX_UPLOAD_SIZE_BYTES', 10 * 1024 * 1024)
 # rather than silently dropping the tail.
 MAX_CLAUSES_PER_DOCUMENT = int(os.getenv('MAX_CLAUSES_PER_DOCUMENT', 500))
 
+# LEX-4: plain-English explanations of risky clauses via Groq. Strictly opt-in
+# per request (`explain: true`) and only active when a key is set. The key is
+# read from the environment and never logged or returned. The model name is a
+# setting because Groq retires models: the original script's mistral-saba-24b
+# and the Mixtral models are no longer listed (checked 2026-10-22).
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
+GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
+EXPLAIN_MAX_CLAUSES = int(os.getenv('EXPLAIN_MAX_CLAUSES', 10))
+EXPLAIN_TIMEOUT_SECONDS = int(os.getenv('EXPLAIN_TIMEOUT_SECONDS', 20))
+
 _DEV_SECRET_KEY = 'dev-key-change-in-production'
 # LEX-9 data retention: analyses (which contain the full text of the analyzed
 # contract) are deleted after this many days by `manage.py purge_expired_analyses`.

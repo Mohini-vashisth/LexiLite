@@ -81,9 +81,12 @@ Nothing is stored unless you send `"save": true`. Without it, the result is retu
 {
   "text": "Full document text here...",
   "filename": "contract.pdf",
-  "save": false
+  "save": false,
+  "explain": false
 }
 ```
+
+`explain` is off by default. When it is `true` and the server has a `GROQ_API_KEY`, the flagged clauses (not the whole contract) are sent to Groq to write a plain-English explanation of each (see [DATA_POLICY.md](DATA_POLICY.md#the-one-case-where-text-leaves-the-server-explanations)). Only the first `EXPLAIN_MAX_CLAUSES` (default 10) risky clauses, most risky first, get an explanation.
 
 **Response (201 Created):** `document_id` is included only when `save` is true. `ip_review` is the result that the page shows: it covers IP-assignment clauses only, and states what was not checked. Its wording is a draft pending lawyer review.
 ```json
@@ -128,6 +131,8 @@ The older `risky_clauses` fields are the general classifier output and are not s
 ```
 
 - `risky_clauses` is **most risky first**, capped at 50. `risky_count` is the full total.
+- With `explain: true`, each risky clause also has `explanation` (text, or `null` if none was produced) and `explanation_source` (`"groq"` or `null`). Explanations are machine-written, not legal advice, and are never saved.
+- `explanations_status` is one of: `not_requested` (nothing sent), `unavailable` (asked for, but the server has no key), `nothing_to_explain` (no risky clauses), `ok`, `partial` (some calls failed), or `failed` (all failed; the classification is still returned).
 - `clauses_truncated` is `true` when the document had more than `MAX_CLAUSES_PER_DOCUMENT` (default 500) chunks; only the first that many were analyzed.
 - `total_clauses` is the number of chunks actually analyzed.
 
@@ -161,7 +166,7 @@ Contract text is sent only to `LLM_ENDPOINT`, never to a third-party AI service.
 
 Analyze an uploaded PDF or DOCX file — same response shape as `/analyze`, but the text is extracted from the file server-side instead of being sent as JSON.
 
-**Request:** `multipart/form-data` with a `file` field and an optional `save=true` field. Nothing is stored unless `save` is `true`.
+**Request:** `multipart/form-data` with a `file` field and optional `save=true` and `explain=true` fields. Nothing is stored unless `save` is `true`, and nothing is sent to Groq unless `explain` is `true`.
 
 ```bash
 curl -X POST http://localhost:8000/api/documents/upload/ \
