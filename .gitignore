@@ -28,3 +28,5 @@ cuad/
 # automatically via transformers on first use; keeping it out of git
 # avoids GitHub's 100MB file-size limit and Git LFS entirely.
 train_model/saved_model_roberta/model.safetensors
+# Derived training data built from CUAD (about 30 MB, regenerate with train_model/build_clause_type_dataset.py)
+train_model/data/generated/
