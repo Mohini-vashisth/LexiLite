@@ -1330,6 +1330,8 @@ class ExplainClauseTests(TestCase):
         self.assertEqual(args[0], GROQ_API_URL)
         self.assertEqual(kwargs['headers']['Authorization'], 'Bearer test-key')
         self.assertEqual(kwargs['json']['model'], 'test-model')
+        self.assertEqual(kwargs['json']['reasoning_effort'], 'low')
+        self.assertGreaterEqual(kwargs['json']['max_tokens'], 500)
         self.assertEqual(kwargs['timeout'], 7)
         system, user = (m['content'] for m in kwargs['json']['messages'])
         self.assertIn('The Consultant assigns all rights.', user)
@@ -1363,6 +1365,31 @@ class ExplainClauseTests(TestCase):
                 else:
                     post.side_effect, post.return_value = None, outcome
                 self.assertIsNone(explain_clause('some clause'))
+
+    @override_settings(GROQ_API_KEY='test-key')
+    @patch('analyzer.explain.requests.post')
+    def test_reasoning_field_is_ignored(self, post):
+        from .explain import explain_clause
+        post.return_value = MagicMock(**{'raise_for_status.return_value': None, 'json.return_value': {
+            'choices': [{'message': {'content': 'Answer.', 'reasoning': 'secret thoughts'}}]}})
+        self.assertEqual(explain_clause('c'), 'Answer.')
+
+    @override_settings(GROQ_API_KEY='test-key', GROQ_MODEL='gone-model')
+    @patch('analyzer.explain.requests.post')
+    def test_model_not_found_is_logged_clearly_without_the_key(self, post):
+        import requests as real_requests
+        from .explain import explain_clause
+        resp = MagicMock(status_code=404)
+        resp.json.return_value = {'error': {'code': 'model_not_found', 'message': 'x'}}
+        resp.raise_for_status.side_effect = real_requests.HTTPError('404', response=resp)
+        post.return_value = resp
+        with self.assertLogs('analyzer.explain', level='WARNING') as logs:
+            self.assertIsNone(explain_clause('SECRET CLAUSE TEXT'))
+        joined = ' '.join(logs.output)
+        self.assertIn('model_not_found', joined)
+        self.assertIn('gone-model', joined)
+        self.assertNotIn('test-key', joined)
+        self.assertNotIn('SECRET CLAUSE TEXT', joined)
 
     @override_settings(GROQ_API_KEY='test-key')
     @patch('analyzer.explain.requests.post')

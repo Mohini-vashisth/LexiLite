@@ -29,7 +29,7 @@ MAX_CLAUSES_PER_DOCUMENT = int(os.getenv('MAX_CLAUSES_PER_DOCUMENT', 500))
 # setting because Groq retires models: the original script's mistral-saba-24b
 # and the Mixtral models are no longer listed (checked 2026-10-22).
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
-GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
+GROQ_MODEL = os.getenv('GROQ_MODEL', 'openai/gpt-oss-120b')
 EXPLAIN_MAX_CLAUSES = int(os.getenv('EXPLAIN_MAX_CLAUSES', 10))
 EXPLAIN_TIMEOUT_SECONDS = int(os.getenv('EXPLAIN_TIMEOUT_SECONDS', 20))
 

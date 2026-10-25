@@ -121,7 +121,7 @@ DEBUG=False                          # Disable debug mode
 DJANGO_SECRET_KEY=your-secret-key   # Production secret
 ALLOWED_HOSTS=api.lexilite.com      # Allowed domains
 GROQ_API_KEY=your-groq-key          # Optional: enables opt-in plain-English explanations (see DATA_POLICY.md)
-GROQ_MODEL=llama-3.3-70b-versatile  # Optional: Groq retires models, check console.groq.com/docs/models
+GROQ_MODEL=openai/gpt-oss-120b      # Optional: Groq retires models, check console.groq.com/docs/models
 EXPLAIN_MAX_CLAUSES=10              # How many top risky clauses get an explanation per request
 ```
 

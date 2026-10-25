@@ -29,6 +29,7 @@ GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
 MAX_EXPLANATION_CHARS = 600
 MAX_CLAUSE_CHARS_SENT = 1500  # chunks are normally under ~800; a defensive cap
 MAX_PARALLEL_CALLS = 5
+MAX_COMPLETION_TOKENS = 800  # reasoning (~25-80 tokens at 'low') plus a <90-word answer
 
 STATUS_NOT_REQUESTED = 'not_requested'
 STATUS_UNAVAILABLE = 'unavailable'   # asked for, but no key is configured
@@ -52,6 +53,20 @@ def explain_available():
     return bool(getattr(settings, 'GROQ_API_KEY', ''))
 
 
+def _http_failure_reason(response):
+    """A short, safe description of a Groq HTTP error: status and Groq's error
+    code only. Never the request, the clause, the key or free-text bodies."""
+    status = getattr(response, 'status_code', None)
+    try:
+        code = response.json()['error']['code']
+    except (AttributeError, KeyError, TypeError, ValueError):
+        code = None
+    if status == 404 and code == 'model_not_found':
+        return (f"HTTP 404 model_not_found: GROQ_MODEL {settings.GROQ_MODEL!r} does not exist "
+                "or this key has no access; check GET /openai/v1/models")
+    return f"HTTP {status}" + (f" {code}" if isinstance(code, str) else "")
+
+
 def explain_clause(clause_text):
     """Return a plain-English explanation of one clause, or None if Groq could
     not answer. Never raises for network or response problems."""
@@ -71,12 +86,18 @@ def explain_clause(clause_text):
                     {'role': 'user', 'content': user_message},
                 ],
                 'temperature': 0.3,
-                'max_tokens': 220,
+                # gpt-oss models "think" first; those tokens count against
+                # max_tokens, so leave room or the answer comes back empty.
+                'reasoning_effort': 'low',
+                'max_tokens': MAX_COMPLETION_TOKENS,
             },
             timeout=settings.EXPLAIN_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         text = response.json()['choices'][0]['message']['content']
+    except requests.HTTPError as e:
+        logger.warning("Groq explanation failed (%s)", _http_failure_reason(e.response))
+        return None
     except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as e:
         # Log only the kind of failure: never the clause, the key or the body.
         logger.warning("Groq explanation failed (%s)", type(e).__name__)
