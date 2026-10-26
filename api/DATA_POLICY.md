@@ -52,6 +52,8 @@ python manage.py purge_expired_analyses --days 7    # override for one run
 
 Hidden-on-read is not deletion: expired rows stay in the database until this command runs. Schedule it (cron on Linux, Task Scheduler on Windows).
 
+**Launch checklist:** the scheduled purge task on the home PC (`LexiLite-PurgeExpiredAnalyses`) is currently **disabled** because the app is not live. Re-enable it before launch, or deletion will not happen.
+
 ## Deleting your data
 
 ```bash
