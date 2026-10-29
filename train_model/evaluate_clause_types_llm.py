@@ -81,7 +81,12 @@ def parse_types(content):
     return sorted({n for n in names if n in base.TYPES}) if isinstance(names, list) else None
 
 
-def ask(chunk_text, key, model, retries=6):
+def request_headers(key):
+    """A hosted API needs the key; a local server (key None) needs no header."""
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
+def ask(chunk_text, key, model, retries=6, api_url=GROQ_API_URL):
     """One labelling call. Returns (types, tokens_used) or (None, 0) on failure."""
     body = {
         "model": model, "temperature": 0, "max_tokens": 600, "reasoning_effort": "low",
@@ -91,8 +96,7 @@ def ask(chunk_text, key, model, retries=6):
     }
     for attempt in range(retries):
         try:
-            resp = requests.post(GROQ_API_URL, json=body, timeout=60,
-                                 headers={"Authorization": f"Bearer {key}"})
+            resp = requests.post(api_url, json=body, timeout=300, headers=request_headers(key))
         except requests.RequestException:
             time.sleep(2 ** attempt)
             continue
@@ -109,17 +113,19 @@ def ask(chunk_text, key, model, retries=6):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--api-url", default=GROQ_API_URL,
+                        help="chat-completions endpoint; a local server such as http://localhost:11434/v1/chat/completions needs no key")
     parser.add_argument("--limit", type=int, default=None, help="only the first N sample chunks (quick look)")
     parser.add_argument("--workers", type=int, default=2, help="parallel calls (the key allows about 8000 tokens a minute)")
     parser.add_argument("--score-only", action="store_true", help="do not call the API; score the answers saved so far")
     parser.add_argument("--out-dir", default=GENERATED_DIR)
     args = parser.parse_args(argv)
 
-    key = load_key()
+    key = load_key() if args.api_url == GROQ_API_URL else None
     sample = base.load_rows(os.path.join(args.out_dir, "eval_sample.jsonl"))
     if args.limit:
         sample = sample[:args.limit]
-    model_slug = args.model.replace("/", "_")
+    model_slug = args.model.replace("/", "_").replace(":", "_")
     cache_path = os.path.join(args.out_dir, f"llm_predictions_{model_slug}.jsonl")
     cache = {}
     if os.path.exists(cache_path):
@@ -133,7 +139,7 @@ def main(argv=None):
     started = time.time()
     with open(cache_path, "a", encoding="utf-8") as out, \
             concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(ask, r["text"], key, args.model): r for r in todo}
+        futures = {pool.submit(ask, r["text"], key, args.model, 6, args.api_url): r for r in todo}
         for done, future in enumerate(concurrent.futures.as_completed(futures), 1):
             row = futures[future]
             types, used = future.result()

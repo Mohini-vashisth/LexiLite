@@ -175,14 +175,14 @@ def best_threshold(y_true, probabilities):
     return best
 
 
-def tune_thresholds(train_vectors, train_rows, c_value, folds=5):
-    """Pick each type's cutoff from out-of-fold predictions on the TRAINING
-    contracts (folds never split a contract), so nothing is tuned on the test
-    set."""
+def out_of_fold_probabilities(train_vectors, train_rows, c_value, folds=5):
+    """For each type, the probability each TRAINING chunk gets from a detector
+    that never saw its contract (folds never split a contract). Used to pick
+    cutoffs and examples without touching the test set."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import GroupKFold
     groups = np.array([r["contract"] for r in train_rows])
-    thresholds = {}
+    result = {}
     for t in TYPES:
         y = np.array([t in r["types"] for r in train_rows])
         oof = np.zeros(len(y))
@@ -190,8 +190,15 @@ def tune_thresholds(train_vectors, train_rows, c_value, folds=5):
             clf = LogisticRegression(max_iter=2000, class_weight="balanced", C=c_value)
             clf.fit(train_vectors[fit_idx], y[fit_idx])
             oof[val_idx] = clf.predict_proba(train_vectors[val_idx])[:, 1]
-        thresholds[t] = best_threshold(y, oof)
-    return thresholds
+        result[t] = oof
+    return result
+
+
+def tune_thresholds(train_vectors, train_rows, c_value, folds=5, oof=None):
+    """Pick each type's cutoff from out-of-fold predictions on the TRAINING
+    contracts, so nothing is tuned on the test set."""
+    oof = oof or out_of_fold_probabilities(train_vectors, train_rows, c_value, folds)
+    return {t: best_threshold(np.array([t in r["types"] for r in train_rows]), oof[t]) for t in TYPES}
 
 
 def predict_sets(detectors, vectors, thresholds=None):
