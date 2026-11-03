@@ -95,8 +95,20 @@ Ensure you have a `Sample.pdf` or `Sample.txt` file in the root directory.
 ## 📊 Explanation of Models
 
 - **Sentence-BERT (MiniLM):** Converts legal clauses to embeddings.
-- **Logistic Regression:** Classifies clauses as `risky` or `safe`.
-- **Groq + Mixtral:** Explains risky clauses in simple language using LLMs.
+- **Logistic Regression:** Classifies clauses as `risky` or `safe`. Caution: those labels come from a 7-keyword rule (liability, indemnify, termination, penalty, breach, damages, loss), so the reported accuracy measures how well the model re-learns that rule, not legal risk.
+- **Groq + `openai/gpt-oss-120b`:** Explains risky clauses in simple language. Opt-in, and the model can be changed with the `GROQ_MODEL` environment variable.
+
+---
+
+## 🧩 Also in the repo
+
+- **Web API** (`api/`, Django): upload or paste a contract, get clauses scored most risky first. Analyses are saved only if the caller asks (opt-in), with a 30-day expiry. See `api/DATA_POLICY.md`; the scheduled purge task on the home PC is disabled until launch, so re-enable it before going live.
+- **IP-assignment check:** a keyword check for IP-ownership clauses with plain reasons and wording to send the client. Not reviewed by a lawyer.
+- **Plain-English explanations:** opt-in, only the top risky clauses are sent to Groq.
+- **Paid full report:** built but off until a self-hosted model is configured.
+- **Clause-type detector evaluation** (`train_model/build_clause_type_dataset.py`, `train_model/evaluate_clause_types*.py`): CUAD's real clause types, a contract-level train/test split, and a comparison of keywords, embeddings, an LLM, and embeddings flagging with an LLM confirming. Best macro F1 so far is 0.487, below the target of 0.50, and not shown to beat the LLM alone. Not used by the live app yet.
+
+This tool can be wrong and is not legal advice.
 
 ---
 
